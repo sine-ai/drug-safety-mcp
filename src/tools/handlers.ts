@@ -209,10 +209,14 @@ function formatDate(dateStr: string): string {
 
 /**
  * Build search query for drug name across multiple fields
+ * Prioritizes medicinalproduct as it's most commonly populated
  */
 function buildDrugSearch(drugName: string): string {
   const escapedName = drugName.replace(/"/g, '\\"');
-  return `(patient.drug.openfda.brand_name:"${escapedName}"+OR+patient.drug.openfda.generic_name:"${escapedName}"+OR+patient.drug.medicinalproduct:"${escapedName}")`;
+  // Search medicinalproduct first (most commonly populated), then openfda fields
+  // Use case-insensitive search by searching both uppercase and original
+  const upperName = drugName.toUpperCase().replace(/"/g, '\\"');
+  return `(patient.drug.medicinalproduct:"${escapedName}"+OR+patient.drug.medicinalproduct:"${upperName}"+OR+patient.drug.openfda.brand_name:"${escapedName}"+OR+patient.drug.openfda.generic_name:"${escapedName}")`;
 }
 
 /**
