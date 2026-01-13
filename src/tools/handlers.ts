@@ -181,11 +181,17 @@ async function buildUrl(baseUrl: string, params: FAERSSearchParams): Promise<str
 async function fetchFAERS(params: FAERSSearchParams): Promise<FAERSResponse> {
   const url = await buildUrl(OPENFDA_FAERS_URL, params);
   
+  // Debug logging
+  console.error(`[DEBUG] Fetching FAERS URL: ${url}`);
+  
   try {
     const response = await fetch(url);
     const data = await response.json() as FAERSResponse;
     
+    console.error(`[DEBUG] Response status: ${response.status}, has error: ${!!data.error}`);
+    
     if (data.error) {
+      console.error(`[DEBUG] API Error: ${JSON.stringify(data.error)}`);
       throw new McpError(ErrorCode.InternalError, `FAERS API Error: ${data.error.message}`);
     }
     
@@ -195,6 +201,7 @@ async function fetchFAERS(params: FAERSSearchParams): Promise<FAERSResponse> {
       throw error;
     }
     if (error instanceof Error) {
+      console.error(`[DEBUG] Fetch error: ${error.message}`);
       throw new McpError(ErrorCode.InternalError, `Failed to fetch FAERS data: ${error.message}`);
     }
     throw error;
