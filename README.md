@@ -27,19 +27,20 @@ This MCP is configured for **Standalone Mode** - it handles its own authenticati
 | `azure-client-id` | App registration client ID |
 | `azure-allowed-groups` | Comma-separated group IDs |
 | `api-keys` | Comma-separated API keys |
-| `openfda-api-key` | (Optional) OpenFDA API key for higher rate limits |
 
-### OpenFDA API Key (Optional but Recommended)
+### OpenFDA API Key (Optional)
 
 The OpenFDA API works without an API key, but with limits:
-- **Without key:** 240 requests/min, 1,000 requests/day per IP
+- **Without key (free mode):** 240 requests/min, 1,000 requests/day per IP
 - **With key:** 240 requests/min, 120,000 requests/day per key
 
 **To get a free API key:**
 1. Go to https://open.fda.gov/apis/authentication/
 2. Enter your email address
 3. Check your email for the API key
-4. Store in Key Vault as `openfda-api-key` or set `OPENFDA_API_KEY` env var
+4. Add to your MCP config as `OPENFDA_API_KEY` environment variable
+
+If no API key is provided, the MCP will run in free mode automatically.
 
 ## Project Structure
 
@@ -53,7 +54,7 @@ src/
 └── index.ts        Entry point
 \`\`\`
 
-Core functionality (security, auth, server) comes from the `@sineai/mcp-core` package.
+Core functionality (security, auth, server) comes from the \`@sineai/mcp-core\` package.
 
 ## Quick Start
 
@@ -75,14 +76,14 @@ npm run start:remote
 
 | Tool | Description |
 |------|-------------|
-| `search_adverse_events` | Search AE reports by drug, reaction, date |
-| `get_event_counts` | Aggregated counts by reaction, outcome, demographics |
-| `compare_safety_profiles` | Compare AE profiles across 2-5 drugs |
-| `get_serious_events` | Filter to serious outcomes only |
-| `get_reporting_trends` | AE volume over time by year/quarter/month |
-| `search_by_reaction` | Find drugs associated with a reaction |
-| `get_concomitant_drugs` | Find commonly co-reported drugs |
-| `get_data_info` | Database info and limitations |
+| \`search_adverse_events\` | Search AE reports by drug, reaction, date |
+| \`get_event_counts\` | Aggregated counts by reaction, outcome, demographics |
+| \`compare_safety_profiles\` | Compare AE profiles across 2-5 drugs |
+| \`get_serious_events\` | Filter to serious outcomes only |
+| \`get_reporting_trends\` | AE volume over time by year/quarter/month |
+| \`search_by_reaction\` | Find drugs associated with a reaction |
+| \`get_concomitant_drugs\` | Find commonly co-reported drugs |
+| \`get_data_info\` | Database info and limitations |
 
 ## Example Queries
 
@@ -108,9 +109,38 @@ This data should be used for signal detection and hypothesis generation, not as 
 
 ## Configuration
 
-All config is stored in **Azure Key Vault** - only the Key Vault name is needed in .env!
+### MCP Config (Cursor/Claude Desktop)
 
-### .env (Minimal Config)
+\`\`\`json
+{
+  "mcpServers": {
+    "faers": {
+      "command": "node",
+      "args": ["/path/to/drug-safety-mcp/dist/index.js"],
+      "env": {
+        "OPENFDA_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+\`\`\`
+
+Or for remote mode:
+
+\`\`\`json
+{
+  "mcpServers": {
+    "faers": {
+      "url": "https://<your-mcp-url>/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-token>"
+      }
+    }
+  }
+}
+\`\`\`
+
+### .env (for local development)
 
 \`\`\`env
 # Only this is required for deployment!
@@ -122,6 +152,7 @@ PORT=3000
 LOG_LEVEL=info
 
 # Optional: OpenFDA API key for higher rate limits
+# If not provided, uses free tier (1,000 requests/day)
 OPENFDA_API_KEY=your_api_key_here
 \`\`\`
 
@@ -144,26 +175,11 @@ This will:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MCP_MODE` | `local` | `local` (stdio) or `remote` (HTTP) |
-| `PORT` | `3000` | HTTP port (remote mode) |
-| `AZURE_KEYVAULT_URL` | - | Key Vault URL |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
-| `OPENFDA_API_KEY` | - | OpenFDA API key (optional) |
-
-## Cursor Configuration
-
-\`\`\`json
-{
-  "mcpServers": {
-    "faers": {
-      "url": "https://<your-mcp-url>/mcp",
-      "headers": {
-        "Authorization": "Bearer <your-token>"
-      }
-    }
-  }
-}
-\`\`\`
+| \`MCP_MODE\` | \`local\` | \`local\` (stdio) or \`remote\` (HTTP) |
+| \`PORT\` | \`3000\` | HTTP port (remote mode) |
+| \`AZURE_KEYVAULT_URL\` | - | Key Vault URL |
+| \`LOG_LEVEL\` | \`info\` | \`debug\`, \`info\`, \`warn\`, \`error\` |
+| \`OPENFDA_API_KEY\` | - | OpenFDA API key (optional, free mode if not set) |
 
 ## License
 

@@ -5,13 +5,18 @@
  * Uses OpenFDA API for drug safety data.
  */
 
-import { ErrorCode, McpError, validateInput, audit, secrets } from "@sineai/mcp-core";
+import { ErrorCode, McpError, validateInput, audit } from "@sineai/mcp-core";
 
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
 
 const OPENFDA_BASE_URL = "https://api.fda.gov/drug/event.json";
+
+// API key from MCP config (env var). If not provided, uses free tier.
+// Free tier: 240 requests/min, 1,000 requests/day per IP
+// With key: 240 requests/min, 120,000 requests/day per key
+const OPENFDA_API_KEY = process.env.OPENFDA_API_KEY || "";
 
 // ============================================================================
 // TYPES
@@ -64,31 +69,14 @@ Source: FDA Adverse Event Reporting System (FAERS) via OpenFDA API
 // ============================================================================
 
 /**
- * Get OpenFDA API key from secrets or environment
- */
-async function getApiKey(): Promise<string> {
-  try {
-    const apiKey = await secrets.get("openfda-api-key");
-    if (apiKey) {
-      return apiKey;
-    }
-  } catch {
-    // Fall through to environment variable
-  }
-  
-  // Use environment variable if available, otherwise empty (free tier)
-  return process.env.OPENFDA_API_KEY || "";
-}
-
-/**
  * Build URL for FAERS API request
  */
-async function buildUrl(params: FAERSSearchParams): Promise<string> {
+function buildUrl(params: FAERSSearchParams): string {
   const urlParams = new URLSearchParams();
   
-  const apiKey = await getApiKey();
-  if (apiKey) {
-    urlParams.append("api_key", apiKey);
+  // Use API key from MCP config if provided
+  if (OPENFDA_API_KEY) {
+    urlParams.append("api_key", OPENFDA_API_KEY);
   }
   
   if (params.search) {
@@ -114,7 +102,7 @@ async function buildUrl(params: FAERSSearchParams): Promise<string> {
  * Fetch data from FAERS API
  */
 async function fetchFAERS(params: FAERSSearchParams): Promise<FAERSResponse> {
-  const url = await buildUrl(params);
+  const url = buildUrl(params);
   
   try {
     const response = await fetch(url);
@@ -608,8 +596,6 @@ async function handleGetDataInfo(): Promise<unknown> {
     limit: 1,
   });
   
-  const apiKey = await getApiKey();
-  
   return {
     database: "FDA Adverse Event Reporting System (FAERS)",
     source: "OpenFDA API",
@@ -617,7 +603,7 @@ async function handleGetDataInfo(): Promise<unknown> {
     last_updated: data.meta?.last_updated || "Unknown",
     coverage: "January 2004 - present",
     update_frequency: "Quarterly",
-    api_key_status: apiKey ? "Configured (120,000 requests/day)" : "Not configured (1,000 requests/day)",
+    api_key_status: OPENFDA_API_KEY ? "Configured (120,000 requests/day)" : "Not configured - using free tier (1,000 requests/day)",
     get_api_key: "https://open.fda.gov/apis/authentication/",
     limitations: [
       "Reports do NOT prove causation between drug and event",
