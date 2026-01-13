@@ -770,8 +770,7 @@ async function handleGetDataInfo(): Promise<unknown> {
     last_updated: data.meta?.last_updated || "Unknown",
     coverage: "January 2004 - present",
     update_frequency: "Quarterly",
-    api_key_status: OPENFDA_API_KEY ? "Configured (120,000 requests/day)" : "Not configured - using free tier (1,000 requests/day)",
-    get_api_key: "https://open.fda.gov/apis/authentication/",
+    rate_limit_status: OPENFDA_API_KEY ? "Configured (120,000 requests/day)" : "Using free tier (1,000 requests/day)",
     limitations: [
       "Reports do NOT prove causation between drug and event",
       "Voluntary reporting - many events go unreported",
@@ -1053,6 +1052,379 @@ async function handleSearchByIndication(args: {
   };
 }
 
+/**
+ * Search adverse events by drug class (pharmacologic class)
+ */
+async function handleSearchByDrugClass(args: {
+  drug_class: string;
+  group_by?: string;
+  serious_only?: boolean;
+  limit?: number;
+}): Promise<unknown> {
+  validateInput(args.drug_class);
+  
+  const groupBy = args.group_by || "reaction";
+  
+  audit({ level: "info", event: "search_by_drug_class", drug_class: args.drug_class, group_by: groupBy });
+  
+  const escapedClass = args.drug_class.replace(/"/g, '\\"');
+  let search = `patient.drug.openfda.pharm_class_epc:"${escapedClass}"`;
+  
+  if (args.serious_only) {
+    search += "+AND+serious:1";
+  }
+  
+  let countField: string;
+  if (groupBy === "drug") {
+    countField = "patient.drug.openfda.brand_name.exact";
+  } else {
+    countField = "patient.reaction.reactionmeddrapt.exact";
+  }
+  
+  const data = await fetchFAERS({
+    search,
+    count: countField,
+    limit: args.limit || 20,
+  });
+  
+  if (!data.results || data.results.length === 0) {
+    return {
+      message: `No adverse events found for drug class "${args.drug_class}"`,
+      suggestion: "Try using the official FDA pharmacologic class name (e.g., 'Tumor Necrosis Factor Blocker [EPC]', 'Dipeptidyl Peptidase 4 Inhibitor [EPC]')",
+      common_classes: [
+        "Tumor Necrosis Factor Blocker [EPC]",
+        "Glucagon-like Peptide-1 Receptor Agonist [EPC]",
+        "Selective Serotonin Reuptake Inhibitor [EPC]",
+        "HMG-CoA Reductase Inhibitor [EPC]",
+        "Angiotensin Converting Enzyme Inhibitor [EPC]",
+        "Proton Pump Inhibitor [EPC]",
+        "Dipeptidyl Peptidase 4 Inhibitor [EPC]",
+      ],
+      disclaimer: FAERS_DISCLAIMER,
+    };
+  }
+  
+  const results = data.results.map((item: any) => ({
+    [groupBy === "drug" ? "drug_name" : "reaction"]: item.term,
+    report_count: item.count,
+  }));
+  
+  // Also get the list of drugs in this class if grouping by reaction
+  let drugsInClass: string[] = [];
+  if (groupBy === "reaction") {
+    const drugData = await fetchFAERS({
+      search,
+      count: "patient.drug.openfda.brand_name.exact",
+      limit: 10,
+    });
+    drugsInClass = drugData.results?.map((item: any) => item.term) || [];
+  }
+
+  const visualizationHint = groupBy === "drug"
+    ? {
+        type: "horizontal_bar_chart",
+        x_axis: "report_count",
+        y_axis: "drug_name",
+        title: `Drugs in ${args.drug_class} (by AE Report Count)`,
+        sort: "descending",
+        x_label: "Number of AE Reports",
+        y_label: "Drug Name",
+      }
+    : {
+        type: "horizontal_bar_chart",
+        x_axis: "report_count",
+        y_axis: "reaction",
+        title: `Top Adverse Events for ${args.drug_class}`,
+        sort: "descending",
+        x_label: "Number of Reports",
+        y_label: "Adverse Reaction",
+      };
+
+  return {
+    drug_class: args.drug_class,
+    grouped_by: groupBy,
+    serious_only: args.serious_only || false,
+    drugs_in_class: drugsInClass.length > 0 ? drugsInClass : undefined,
+    results,
+    visualization_hint: visualizationHint,
+    note: "Results represent all drugs in this pharmacologic class. Higher counts may reflect more widely used drugs within the class.",
+    disclaimer: FAERS_DISCLAIMER,
+  };
+}
+
+/**
+ * Compare FDA label adverse reactions to actual FAERS reports
+ */
+async function handleCompareLabelToReports(args: {
+  drug_name: string;
+  top_n?: number;
+}): Promise<unknown> {
+  validateInput(args.drug_name);
+  
+  audit({ level: "info", event: "compare_label_to_reports", drug: args.drug_name });
+  
+  const topN = args.top_n || 20;
+  
+  // Step 1: Get drug label adverse reactions
+  const escapedName = args.drug_name.replace(/"/g, '\\"');
+  const labelSearch = `(openfda.brand_name:"${escapedName}"+OR+openfda.generic_name:"${escapedName}")`;
+  const labelUrl = buildUrl(OPENFDA_LABEL_URL, { search: labelSearch, limit: 1 });
+  
+  let labelAdverseReactions: string[] = [];
+  let labelWarnings: string | null = null;
+  let brandName = args.drug_name;
+  let genericName = args.drug_name;
+  
+  try {
+    const labelResponse = await fetch(labelUrl);
+    const labelData = await labelResponse.json() as FAERSResponse;
+    
+    if (labelData.results && labelData.results.length > 0) {
+      const label = labelData.results[0];
+      brandName = label.openfda?.brand_name?.[0] || args.drug_name;
+      genericName = label.openfda?.generic_name?.[0] || args.drug_name;
+      
+      // Extract adverse reactions from label text
+      const arText = label.adverse_reactions?.[0] || "";
+      // Simple extraction - look for capitalized terms that might be reactions
+      const reactionPattern = /\b([A-Z][a-z]+(?:\s+[a-z]+)*)\b/g;
+      const matches: string[] = arText.match(reactionPattern) || [];
+      const excludeWords = ["The", "This", "These", "There", "They", "With", "From", "Have", "Were", "Been"];
+      labelAdverseReactions = [...new Set(matches)]
+        .filter((r) => r.length > 3 && !excludeWords.includes(r))
+        .slice(0, 50);
+      
+      labelWarnings = label.boxed_warning?.[0] || label.warnings?.[0] || null;
+    }
+  } catch {
+    // Continue without label data
+  }
+  
+  // Step 2: Get top reported reactions from FAERS
+  const faersData = await fetchFAERS({
+    search: buildDrugSearch(args.drug_name),
+    count: "patient.reaction.reactionmeddrapt.exact",
+    limit: topN,
+  });
+  
+  if (!faersData.results || faersData.results.length === 0) {
+    return {
+      message: `No FAERS reports found for "${args.drug_name}"`,
+      label_data_available: labelAdverseReactions.length > 0,
+      disclaimer: FAERS_DISCLAIMER,
+    };
+  }
+  
+  const reportedReactions = faersData.results.map((item: any) => ({
+    reaction: item.term,
+    report_count: item.count,
+  }));
+  
+  // Step 3: Compare - find reactions in reports but potentially not on label
+  const labelReactionsLower = labelAdverseReactions.map(r => r.toLowerCase());
+  
+  const comparison = reportedReactions.map((reported: any) => {
+    const reactionLower = reported.reaction.toLowerCase();
+    const onLabel = labelReactionsLower.some(lr => 
+      reactionLower.includes(lr) || lr.includes(reactionLower)
+    );
+    
+    return {
+      reaction: reported.reaction,
+      report_count: reported.report_count,
+      on_label: onLabel,
+      signal_status: onLabel ? "labeled" : "potential_signal",
+    };
+  });
+  
+  // Separate into labeled vs potential signals
+  const labeledReactions = comparison.filter((c: any) => c.on_label);
+  const potentialSignals = comparison.filter((c: any) => !c.on_label);
+
+  return {
+    drug: args.drug_name,
+    brand_name: brandName,
+    generic_name: genericName,
+    analysis_summary: {
+      total_reactions_analyzed: comparison.length,
+      labeled_reactions_found: labeledReactions.length,
+      potential_signals: potentialSignals.length,
+      signal_percentage: Math.round((potentialSignals.length / comparison.length) * 100),
+    },
+    has_boxed_warning: !!labelWarnings,
+    labeled_reactions: labeledReactions,
+    potential_signals: potentialSignals,
+    visualization_hint: {
+      type: "horizontal_bar_chart",
+      x_axis: "report_count",
+      y_axis: "reaction",
+      title: `Label vs FAERS Comparison for ${args.drug_name}`,
+      sort: "descending",
+      color_by: "signal_status",
+      color_scheme: {
+        labeled: "#22c55e",
+        potential_signal: "#f59e0b",
+      },
+      x_label: "Number of Reports",
+      y_label: "Adverse Reaction",
+      legend: ["On Label", "Potential Signal"],
+    },
+    interpretation: {
+      labeled: "These reactions are documented in the FDA-approved label",
+      potential_signal: "These reactions are frequently reported but may not be prominently featured on the label - warrant further investigation",
+    },
+    note: "This analysis uses text matching and may not capture all label mentions. Always review the full prescribing information.",
+    disclaimer: FAERS_DISCLAIMER,
+  };
+}
+
+/**
+ * Get pediatric safety data
+ */
+async function handleGetPediatricSafety(args: {
+  drug_name: string;
+  age_group?: string;
+  include_adult_comparison?: boolean;
+  limit?: number;
+}): Promise<unknown> {
+  validateInput(args.drug_name);
+  
+  const ageGroup = args.age_group || "all_pediatric";
+  const includeAdultComparison = args.include_adult_comparison !== false;
+  const limit = args.limit || 15;
+  
+  audit({ level: "info", event: "get_pediatric_safety", drug: args.drug_name, age_group: ageGroup });
+  
+  // Define age ranges (in years, using patientonsetage field)
+  // FAERS age can be in different units, we'll search for common patterns
+  const ageRanges: { [key: string]: { min: number; max: number; label: string } } = {
+    neonate: { min: 0, max: 0, label: "Neonate (0-27 days)" },
+    infant: { min: 0, max: 1, label: "Infant (28 days - 23 months)" },
+    child: { min: 2, max: 11, label: "Child (2-11 years)" },
+    adolescent: { min: 12, max: 17, label: "Adolescent (12-17 years)" },
+    all_pediatric: { min: 0, max: 17, label: "All Pediatric (0-17 years)" },
+  };
+  
+  const range = ageRanges[ageGroup] || ageRanges.all_pediatric;
+  
+  // Build search for pediatric patients
+  const drugSearch = buildDrugSearch(args.drug_name);
+  const pediatricSearch = `${drugSearch}+AND+patient.patientonsetage:[${range.min}+TO+${range.max}]+AND+patient.patientonsetageunit:801`; // 801 = years
+  
+  // Get top reactions for pediatric patients
+  const pediatricData = await fetchFAERS({
+    search: pediatricSearch,
+    count: "patient.reaction.reactionmeddrapt.exact",
+    limit,
+  });
+  
+  // Get total pediatric report count
+  const pediatricCountData = await fetchFAERS({
+    search: pediatricSearch,
+    limit: 1,
+  });
+  
+  const pediatricReactions = pediatricData.results?.map((item: any) => ({
+    reaction: item.term,
+    report_count: item.count,
+  })) || [];
+  
+  const pediatricTotalReports = pediatricCountData.meta?.results?.total || 0;
+  
+  // Get serious event breakdown for pediatric
+  const pediatricSeriousData = await fetchFAERS({
+    search: `${pediatricSearch}+AND+serious:1`,
+    limit: 1,
+  });
+  const pediatricSeriousCount = pediatricSeriousData.meta?.results?.total || 0;
+  
+  // Get sex distribution for pediatric
+  const pediatricSexData = await fetchFAERS({
+    search: pediatricSearch,
+    count: "patient.patientsex",
+    limit: 3,
+  });
+  const pediatricSexDistribution = pediatricSexData.results?.map((item: any) => ({
+    sex: item.term === 1 ? "Male" : item.term === 2 ? "Female" : "Unknown",
+    count: item.count,
+  })) || [];
+  
+  let adultComparison: any = null;
+  
+  if (includeAdultComparison) {
+    // Get adult data for comparison
+    const adultSearch = `${drugSearch}+AND+patient.patientonsetage:[18+TO+120]+AND+patient.patientonsetageunit:801`;
+    
+    const adultData = await fetchFAERS({
+      search: adultSearch,
+      count: "patient.reaction.reactionmeddrapt.exact",
+      limit,
+    });
+    
+    const adultCountData = await fetchFAERS({
+      search: adultSearch,
+      limit: 1,
+    });
+    
+    const adultReactions = adultData.results?.map((item: any) => ({
+      reaction: item.term,
+      report_count: item.count,
+    })) || [];
+    
+    const adultTotalReports = adultCountData.meta?.results?.total || 0;
+    
+    // Find reactions unique to or more prominent in pediatric population
+    const adultReactionMap = new Map(adultReactions.map((r: any) => [r.reaction, r.report_count]));
+    const pediatricReactionMap = new Map(pediatricReactions.map((r: any) => [r.reaction, r.report_count]));
+    
+    const pediatricUnique = pediatricReactions.filter((r: any) => !adultReactionMap.has(r.reaction));
+    const adultUnique = adultReactions.filter((r: any) => !pediatricReactionMap.has(r.reaction));
+    
+    adultComparison = {
+      adult_total_reports: adultTotalReports,
+      adult_top_reactions: adultReactions.slice(0, 10),
+      pediatric_unique_reactions: pediatricUnique,
+      adult_unique_reactions: adultUnique.slice(0, 10),
+      report_ratio: pediatricTotalReports > 0 && adultTotalReports > 0 
+        ? `1:${Math.round(adultTotalReports / pediatricTotalReports)}`
+        : "N/A",
+    };
+  }
+
+  return {
+    drug: args.drug_name,
+    age_group: range.label,
+    pediatric_summary: {
+      total_reports: pediatricTotalReports,
+      serious_reports: pediatricSeriousCount,
+      serious_percentage: pediatricTotalReports > 0 
+        ? Math.round((pediatricSeriousCount / pediatricTotalReports) * 100)
+        : 0,
+      sex_distribution: pediatricSexDistribution,
+    },
+    top_pediatric_reactions: pediatricReactions,
+    adult_comparison: adultComparison,
+    visualization_hint: {
+      type: "grouped_bar_chart",
+      group_by: "reaction",
+      series: ["Pediatric", "Adult"],
+      value: "report_count",
+      title: `Pediatric vs Adult Safety Profile: ${args.drug_name}`,
+      x_axis: "reaction",
+      y_axis: "report_count",
+      secondary_chart: {
+        type: "pie_chart",
+        category: "sex",
+        value: "count",
+        title: "Pediatric Sex Distribution",
+        color_scheme: COLOR_SCHEMES.sex,
+      },
+    },
+    regulatory_note: "Pediatric safety data is critical for pediatric trial planning and PREA (Pediatric Research Equity Act) requirements",
+    disclaimer: FAERS_DISCLAIMER,
+  };
+}
+
 // ============================================================================
 // HANDLER ROUTER
 // ============================================================================
@@ -1091,6 +1463,15 @@ export async function handleTool(name: string, args: Record<string, unknown>): P
     
     case "search_by_indication":
       return handleSearchByIndication(args as Parameters<typeof handleSearchByIndication>[0]);
+    
+    case "search_by_drug_class":
+      return handleSearchByDrugClass(args as Parameters<typeof handleSearchByDrugClass>[0]);
+    
+    case "compare_label_to_reports":
+      return handleCompareLabelToReports(args as Parameters<typeof handleCompareLabelToReports>[0]);
+    
+    case "get_pediatric_safety":
+      return handleGetPediatricSafety(args as Parameters<typeof handleGetPediatricSafety>[0]);
     
     default:
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);

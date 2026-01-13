@@ -288,4 +288,88 @@ export const TOOLS: ToolDefinition[] = [
       required: ["indication"],
     },
   },
+
+  // -------------------------------------------------------------------------
+  // SEARCH BY DRUG CLASS
+  // -------------------------------------------------------------------------
+  {
+    name: "search_by_drug_class",
+    description: "Search adverse events across an entire drug class (pharmacologic class). Compare safety profiles of all drugs in a therapeutic category like 'TNF inhibitors', 'GLP-1 agonists', 'SSRIs', etc.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        drug_class: {
+          type: "string",
+          description: "Pharmacologic class name (e.g., 'Tumor Necrosis Factor Blocker', 'GLP-1 Receptor Agonist', 'Selective Serotonin Reuptake Inhibitor', 'ACE Inhibitor')",
+        },
+        group_by: {
+          type: "string",
+          enum: ["drug", "reaction"],
+          description: "Group results by individual drug or by reaction type (default: reaction)",
+        },
+        serious_only: {
+          type: "boolean",
+          description: "Filter to only serious adverse events (default: false)",
+        },
+        limit: {
+          type: "number",
+          description: "Number of top results to return (default: 20)",
+        },
+      },
+      required: ["drug_class"],
+    },
+  },
+
+  // -------------------------------------------------------------------------
+  // COMPARE LABEL TO REPORTS
+  // -------------------------------------------------------------------------
+  {
+    name: "compare_label_to_reports",
+    description: "Compare FDA drug label adverse reactions to actual FAERS reports. Identifies potential emerging signals (reactions reported but not on label) and validates labeled reactions. Critical for pharmacovigilance signal detection.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        drug_name: {
+          type: "string",
+          description: "Brand name or generic name of the drug",
+        },
+        top_n: {
+          type: "number",
+          description: "Number of top reported reactions to analyze (default: 20)",
+        },
+      },
+      required: ["drug_name"],
+    },
+  },
+
+  // -------------------------------------------------------------------------
+  // GET PEDIATRIC SAFETY
+  // -------------------------------------------------------------------------
+  {
+    name: "get_pediatric_safety",
+    description: "Get adverse event data specifically for pediatric patients (age 0-17). Returns age-stratified safety data, top reactions in children, and comparison to adult safety profile. Essential for pediatric trial planning.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        drug_name: {
+          type: "string",
+          description: "Brand name or generic name of the drug",
+        },
+        age_group: {
+          type: "string",
+          enum: ["neonate", "infant", "child", "adolescent", "all_pediatric"],
+          description: "Specific pediatric age group: neonate (0-27 days), infant (28 days-23 months), child (2-11 years), adolescent (12-17 years), or all_pediatric (0-17 years). Default: all_pediatric",
+        },
+        include_adult_comparison: {
+          type: "boolean",
+          description: "Include comparison to adult (18+) safety profile (default: true)",
+        },
+        limit: {
+          type: "number",
+          description: "Number of top reactions to return (default: 15)",
+        },
+      },
+      required: ["drug_name"],
+    },
+  },
 ];
