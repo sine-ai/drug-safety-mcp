@@ -16,20 +16,23 @@ MCP server for FDA Adverse Event Reporting System (FAERS) data via the OpenFDA A
 - Get FDA drug label information (warnings, contraindications, boxed warnings)
 - Search FDA drug recalls and enforcement actions
 - Search by indication to compare drugs in the same therapeutic class
-- **Search by drug class** (e.g., all TNF inhibitors, GLP-1 agonists)
-- **Compare label to FAERS reports** - identify emerging safety signals
+- Search by drug class (e.g., all TNF inhibitors, GLP-1 agonists)
+- Compare label to FAERS reports - identify emerging safety signals
 - **Pediatric safety analysis** with adult comparison
+- **Geriatric safety analysis** with younger adult comparison
+- **Executive safety summary** - quick due diligence
+- **Pregnancy & lactation info** - critical for protocol exclusion criteria
 
 ## User Personas
 
 | User | Primary Tools |
 |------|---------------|
-| **Medical Monitor** | search_adverse_events, compare_safety_profiles, get_pediatric_safety |
-| **Protocol Writer** | search_by_drug_class, get_drug_label_info, get_pediatric_safety |
-| **Pharmacovigilance** | compare_label_to_reports, get_reporting_trends, get_serious_events |
-| **Regulatory Affairs** | compare_label_to_reports, get_drug_label_info, get_recall_info |
-| **BD / Competitive Intel** | compare_safety_profiles, search_by_drug_class, get_recall_info |
-| **Medical Affairs** | get_event_counts, get_drug_label_info, search_by_reaction |
+| **Medical Monitor** | search_adverse_events, compare_safety_profiles, get_pediatric_safety, get_geriatric_safety |
+| **Protocol Writer** | search_by_drug_class, get_drug_label_info, get_pregnancy_lactation_info, get_pediatric_safety |
+| **Pharmacovigilance** | compare_label_to_reports, get_reporting_trends, get_serious_events, get_safety_summary |
+| **Regulatory Affairs** | compare_label_to_reports, get_drug_label_info, get_recall_info, get_pregnancy_lactation_info |
+| **BD / Competitive Intel** | compare_safety_profiles, search_by_drug_class, get_recall_info, get_safety_summary |
+| **Medical Affairs** | get_event_counts, get_drug_label_info, search_by_reaction, get_safety_summary |
 
 ## Authentication
 
@@ -44,6 +47,7 @@ This MCP is configured for **Standalone Mode** - it handles its own authenticati
 | \`azure-client-id\` | App registration client ID |
 | \`azure-allowed-groups\` | Comma-separated group IDs |
 | \`api-keys\` | Comma-separated API keys |
+| \`openfda-api-key\` | (Optional) OpenFDA API key - checked if not in MCP config |
 
 ### OpenFDA API Key (Optional)
 
@@ -51,13 +55,15 @@ The OpenFDA API works without an API key, but with limits:
 - **Without key (free mode):** 240 requests/min, 1,000 requests/day per IP
 - **With key:** 240 requests/min, 120,000 requests/day per key
 
+**API Key Priority:**
+1. Environment variable \`OPENFDA_API_KEY\` (from MCP config)
+2. Key Vault secret \`openfda-api-key\`
+3. Free tier (if neither configured)
+
 **To get a free API key:**
 1. Go to https://open.fda.gov/apis/authentication/
 2. Enter your email address
 3. Check your email for the API key
-4. Add to your MCP config as \`OPENFDA_API_KEY\` environment variable
-
-If no API key is provided, the MCP will run in free mode automatically.
 
 ## Quick Start
 
@@ -75,7 +81,7 @@ npm run dev
 npm run start:remote
 \`\`\`
 
-## Available Tools (14 Total)
+## Available Tools (17 Total)
 
 ### Core Adverse Event Tools
 | Tool | Description |
@@ -99,6 +105,13 @@ npm run start:remote
 |------|-------------|
 | \`compare_label_to_reports\` | Compare FDA label to FAERS - identify emerging signals |
 | \`get_pediatric_safety\` | Pediatric-specific safety with adult comparison |
+| \`get_geriatric_safety\` | Geriatric-specific safety (65+) with younger adult comparison |
+
+### Executive & Protocol Tools
+| Tool | Description |
+|------|-------------|
+| \`get_safety_summary\` | Executive summary: counts, top reactions, trends, recalls, warnings |
+| \`get_pregnancy_lactation_info\` | Pregnancy/lactation info for protocol exclusion criteria |
 
 ### Drug Information Tools
 | Tool | Description |
@@ -111,15 +124,15 @@ npm run start:remote
 
 **Medical Monitor:**
 - "Is injection site reaction expected for Humira?"
-- "Compare Humira safety profile to other TNF inhibitors"
+- "What's the geriatric safety profile for warfarin?"
 
 **Protocol Writer:**
 - "What AEs should I monitor for GLP-1 agonists?"
-- "What's the pediatric safety profile for metformin?"
+- "Get pregnancy and lactation info for methotrexate"
 
 **Pharmacovigilance:**
-- "Are there any signals for Ozempic not on the label?"
-- "Show me the reporting trend for Keytruda over 3 years"
+- "Give me an executive safety summary for Ozempic"
+- "Are there any signals for Keytruda not on the label?"
 
 **Regulatory Affairs:**
 - "What does the Xarelto label say vs what's being reported?"
@@ -127,7 +140,7 @@ npm run start:remote
 
 **BD / Competitive Intel:**
 - "Compare safety profiles of all SGLT2 inhibitors"
-- "Any red flags on this acquisition target drug?"
+- "Quick safety summary for this acquisition target drug"
 
 ## Data Limitations
 
@@ -190,7 +203,7 @@ npm run deploy
 | \`PORT\` | \`3000\` | HTTP port (remote mode) |
 | \`AZURE_KEYVAULT_URL\` | - | Key Vault URL |
 | \`LOG_LEVEL\` | \`info\` | \`debug\`, \`info\`, \`warn\`, \`error\` |
-| \`OPENFDA_API_KEY\` | - | OpenFDA API key (optional, free mode if not set) |
+| \`OPENFDA_API_KEY\` | - | OpenFDA API key (optional, also checks Key Vault) |
 
 ## License
 

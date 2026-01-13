@@ -372,4 +372,79 @@ export const TOOLS: ToolDefinition[] = [
       required: ["drug_name"],
     },
   },
+
+  // -------------------------------------------------------------------------
+  // GET GERIATRIC SAFETY
+  // -------------------------------------------------------------------------
+  {
+    name: "get_geriatric_safety",
+    description: "Get adverse event data specifically for geriatric patients (age 65+). Returns age-stratified safety data, top reactions in elderly, falls/cognitive events, and comparison to younger adult profile. Essential for trials in elderly populations.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        drug_name: {
+          type: "string",
+          description: "Brand name or generic name of the drug",
+        },
+        age_group: {
+          type: "string",
+          enum: ["65_to_74", "75_to_84", "85_plus", "all_geriatric"],
+          description: "Specific geriatric age group or all_geriatric (65+). Default: all_geriatric",
+        },
+        include_adult_comparison: {
+          type: "boolean",
+          description: "Include comparison to younger adult (18-64) safety profile (default: true)",
+        },
+        limit: {
+          type: "number",
+          description: "Number of top reactions to return (default: 15)",
+        },
+      },
+      required: ["drug_name"],
+    },
+  },
+
+  // -------------------------------------------------------------------------
+  // GET SAFETY SUMMARY
+  // -------------------------------------------------------------------------
+  {
+    name: "get_safety_summary",
+    description: "Get an executive safety summary for a drug combining: total report counts, top 10 reactions, serious event breakdown, recent trend direction, any recalls, and boxed warnings. Ideal for quick due diligence or HCP questions.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        drug_name: {
+          type: "string",
+          description: "Brand name or generic name of the drug",
+        },
+        include_label_warnings: {
+          type: "boolean",
+          description: "Include boxed warnings and major label warnings (default: true)",
+        },
+        include_recalls: {
+          type: "boolean",
+          description: "Include recall history summary (default: true)",
+        },
+      },
+      required: ["drug_name"],
+    },
+  },
+
+  // -------------------------------------------------------------------------
+  // GET PREGNANCY LACTATION INFO
+  // -------------------------------------------------------------------------
+  {
+    name: "get_pregnancy_lactation_info",
+    description: "Get pregnancy and lactation safety information from FDA drug label. Includes pregnancy category/narrative, lactation recommendations, and females/males of reproductive potential guidance. Critical for protocol exclusion criteria.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        drug_name: {
+          type: "string",
+          description: "Brand name or generic name of the drug",
+        },
+      },
+      required: ["drug_name"],
+    },
+  },
 ];

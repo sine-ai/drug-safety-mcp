@@ -5,7 +5,7 @@
  * Uses OpenFDA API for drug safety data.
  */
 
-import { ErrorCode, McpError, validateInput, audit } from "@sineai/mcp-core";
+import { ErrorCode, McpError, validateInput, audit, secrets } from "@sineai/mcp-core";
 
 // ============================================================================
 // CONFIGURATION
@@ -15,10 +15,40 @@ const OPENFDA_FAERS_URL = "https://api.fda.gov/drug/event.json";
 const OPENFDA_LABEL_URL = "https://api.fda.gov/drug/label.json";
 const OPENFDA_ENFORCEMENT_URL = "https://api.fda.gov/drug/enforcement.json";
 
-// API key from MCP config (env var). If not provided, uses free tier.
-// Free tier: 240 requests/min, 1,000 requests/day per IP
-// With key: 240 requests/min, 120,000 requests/day per key
-const OPENFDA_API_KEY = process.env.OPENFDA_API_KEY || "";
+// API key cache - loaded once from env or Key Vault
+let OPENFDA_API_KEY: string | null = null;
+
+/**
+ * Get OpenFDA API key from environment or Key Vault
+ * Priority: 1) Environment variable, 2) Key Vault secret, 3) Free tier (empty)
+ */
+async function getApiKey(): Promise<string> {
+  // Return cached value if already loaded
+  if (OPENFDA_API_KEY !== null) {
+    return OPENFDA_API_KEY;
+  }
+  
+  // Check environment variable first (from MCP config)
+  if (process.env.OPENFDA_API_KEY) {
+    OPENFDA_API_KEY = process.env.OPENFDA_API_KEY;
+    return OPENFDA_API_KEY;
+  }
+  
+  // Try Key Vault
+  try {
+    const keyVaultKey = await secrets.get("openfda-api-key");
+    if (keyVaultKey) {
+      OPENFDA_API_KEY = keyVaultKey;
+      return OPENFDA_API_KEY;
+    }
+  } catch {
+    // Key Vault not available or secret not found
+  }
+  
+  // Use free tier
+  OPENFDA_API_KEY = "";
+  return OPENFDA_API_KEY;
+}
 
 // ============================================================================
 // TYPES
@@ -113,12 +143,13 @@ const COLOR_SCHEMES = {
 /**
  * Build URL for OpenFDA API request
  */
-function buildUrl(baseUrl: string, params: FAERSSearchParams): string {
+async function buildUrl(baseUrl: string, params: FAERSSearchParams): Promise<string> {
   const urlParams = new URLSearchParams();
   
-  // Use API key from MCP config if provided
-  if (OPENFDA_API_KEY) {
-    urlParams.append("api_key", OPENFDA_API_KEY);
+  // Get API key from env or Key Vault
+  const apiKey = await getApiKey();
+  if (apiKey) {
+    urlParams.append("api_key", apiKey);
   }
   
   if (params.search) {
@@ -144,7 +175,7 @@ function buildUrl(baseUrl: string, params: FAERSSearchParams): string {
  * Fetch data from FAERS API
  */
 async function fetchFAERS(params: FAERSSearchParams): Promise<FAERSResponse> {
-  const url = buildUrl(OPENFDA_FAERS_URL, params);
+  const url = await buildUrl(OPENFDA_FAERS_URL, params);
   
   try {
     const response = await fetch(url);
@@ -238,7 +269,7 @@ async function handleSearchAdverseEvents(args: {
   });
   
   if (!data.results || data.results.length === 0) {
-    return {
+  return {
       message: `No adverse event reports found for "${args.drug_name}"`,
       disclaimer: FAERS_DISCLAIMER,
     };
@@ -763,6 +794,8 @@ async function handleGetDataInfo(): Promise<unknown> {
     limit: 1,
   });
   
+  const apiKey = await getApiKey();
+  
   return {
     database: "FDA Adverse Event Reporting System (FAERS)",
     source: "OpenFDA API",
@@ -770,7 +803,7 @@ async function handleGetDataInfo(): Promise<unknown> {
     last_updated: data.meta?.last_updated || "Unknown",
     coverage: "January 2004 - present",
     update_frequency: "Quarterly",
-    rate_limit_status: OPENFDA_API_KEY ? "Configured (120,000 requests/day)" : "Using free tier (1,000 requests/day)",
+    rate_limit_status: apiKey ? "Configured (120,000 requests/day)" : "Using free tier (1,000 requests/day)",
     limitations: [
       "Reports do NOT prove causation between drug and event",
       "Voluntary reporting - many events go unreported",
@@ -803,7 +836,7 @@ async function handleGetDrugLabelInfo(args: {
   const escapedName = args.drug_name.replace(/"/g, '\\"');
   const search = `(openfda.brand_name:"${escapedName}"+OR+openfda.generic_name:"${escapedName}")`;
   
-  const url = buildUrl(OPENFDA_LABEL_URL, { search, limit: 1 });
+  const url = await buildUrl(OPENFDA_LABEL_URL, { search, limit: 1 });
   
   try {
     const response = await fetch(url);
@@ -901,7 +934,7 @@ async function handleGetRecallInfo(args: {
     search += `+AND+status:"${args.status}"`;
   }
   
-  const url = buildUrl(OPENFDA_ENFORCEMENT_URL, { search, limit: args.limit || 10 });
+  const url = await buildUrl(OPENFDA_ENFORCEMENT_URL, { search, limit: args.limit || 10 });
   
   try {
     const response = await fetch(url);
@@ -1168,7 +1201,7 @@ async function handleCompareLabelToReports(args: {
   // Step 1: Get drug label adverse reactions
   const escapedName = args.drug_name.replace(/"/g, '\\"');
   const labelSearch = `(openfda.brand_name:"${escapedName}"+OR+openfda.generic_name:"${escapedName}")`;
-  const labelUrl = buildUrl(OPENFDA_LABEL_URL, { search: labelSearch, limit: 1 });
+  const labelUrl = await buildUrl(OPENFDA_LABEL_URL, { search: labelSearch, limit: 1 });
   
   let labelAdverseReactions: string[] = [];
   let labelWarnings: string | null = null;
@@ -1425,6 +1458,477 @@ async function handleGetPediatricSafety(args: {
   };
 }
 
+/**
+ * Get geriatric safety data
+ */
+async function handleGetGeriatricSafety(args: {
+  drug_name: string;
+  age_group?: string;
+  include_adult_comparison?: boolean;
+  limit?: number;
+}): Promise<unknown> {
+  validateInput(args.drug_name);
+  
+  const ageGroup = args.age_group || "all_geriatric";
+  const includeAdultComparison = args.include_adult_comparison !== false;
+  const limit = args.limit || 15;
+  
+  audit({ level: "info", event: "get_geriatric_safety", drug: args.drug_name, age_group: ageGroup });
+  
+  // Define age ranges
+  const ageRanges: { [key: string]: { min: number; max: number; label: string } } = {
+    "65_to_74": { min: 65, max: 74, label: "Young-Old (65-74 years)" },
+    "75_to_84": { min: 75, max: 84, label: "Middle-Old (75-84 years)" },
+    "85_plus": { min: 85, max: 120, label: "Oldest-Old (85+ years)" },
+    "all_geriatric": { min: 65, max: 120, label: "All Geriatric (65+ years)" },
+  };
+  
+  const range = ageRanges[ageGroup] || ageRanges.all_geriatric;
+  
+  // Build search for geriatric patients
+  const drugSearch = buildDrugSearch(args.drug_name);
+  const geriatricSearch = `${drugSearch}+AND+patient.patientonsetage:[${range.min}+TO+${range.max}]+AND+patient.patientonsetageunit:801`;
+  
+  // Get top reactions for geriatric patients
+  const geriatricData = await fetchFAERS({
+    search: geriatricSearch,
+    count: "patient.reaction.reactionmeddrapt.exact",
+    limit,
+  });
+  
+  // Get total geriatric report count
+  const geriatricCountData = await fetchFAERS({
+    search: geriatricSearch,
+    limit: 1,
+  });
+  
+  const geriatricReactions = geriatricData.results?.map((item: any) => ({
+    reaction: item.term,
+    report_count: item.count,
+  })) || [];
+  
+  const geriatricTotalReports = geriatricCountData.meta?.results?.total || 0;
+  
+  // Get serious event breakdown for geriatric
+  const geriatricSeriousData = await fetchFAERS({
+    search: `${geriatricSearch}+AND+serious:1`,
+    limit: 1,
+  });
+  const geriatricSeriousCount = geriatricSeriousData.meta?.results?.total || 0;
+  
+  // Check for geriatric-specific concerns (falls, cognitive, etc.)
+  const geriatricConcerns = ["fall", "confusion", "dizziness", "somnolence", "cognitive", "memory", "delirium", "syncope"];
+  const geriatricSpecificReactions = geriatricReactions.filter((r: any) => 
+    geriatricConcerns.some(concern => r.reaction.toLowerCase().includes(concern))
+  );
+  
+  // Get sex distribution for geriatric
+  const geriatricSexData = await fetchFAERS({
+    search: geriatricSearch,
+    count: "patient.patientsex",
+    limit: 3,
+  });
+  const geriatricSexDistribution = geriatricSexData.results?.map((item: any) => ({
+    sex: item.term === 1 ? "Male" : item.term === 2 ? "Female" : "Unknown",
+    count: item.count,
+  })) || [];
+  
+  let adultComparison: any = null;
+  
+  if (includeAdultComparison) {
+    // Get younger adult data for comparison (18-64)
+    const adultSearch = `${drugSearch}+AND+patient.patientonsetage:[18+TO+64]+AND+patient.patientonsetageunit:801`;
+    
+    const adultData = await fetchFAERS({
+      search: adultSearch,
+      count: "patient.reaction.reactionmeddrapt.exact",
+      limit,
+    });
+    
+    const adultCountData = await fetchFAERS({
+      search: adultSearch,
+      limit: 1,
+    });
+    
+    const adultReactions = adultData.results?.map((item: any) => ({
+      reaction: item.term,
+      report_count: item.count,
+    })) || [];
+    
+    const adultTotalReports = adultCountData.meta?.results?.total || 0;
+    
+    // Find reactions unique to or more prominent in geriatric population
+    const adultReactionMap = new Map(adultReactions.map((r: any) => [r.reaction, r.report_count]));
+    const geriatricReactionMap = new Map(geriatricReactions.map((r: any) => [r.reaction, r.report_count]));
+    
+    const geriatricUnique = geriatricReactions.filter((r: any) => !adultReactionMap.has(r.reaction));
+    const adultUnique = adultReactions.filter((r: any) => !geriatricReactionMap.has(r.reaction));
+    
+    adultComparison = {
+      younger_adult_total_reports: adultTotalReports,
+      younger_adult_top_reactions: adultReactions.slice(0, 10),
+      geriatric_unique_reactions: geriatricUnique,
+      younger_adult_unique_reactions: adultUnique.slice(0, 10),
+      report_ratio: geriatricTotalReports > 0 && adultTotalReports > 0 
+        ? `${Math.round(geriatricTotalReports / adultTotalReports * 100) / 100}:1`
+        : "N/A",
+    };
+  }
+
+  return {
+    drug: args.drug_name,
+    age_group: range.label,
+    geriatric_summary: {
+      total_reports: geriatricTotalReports,
+      serious_reports: geriatricSeriousCount,
+      serious_percentage: geriatricTotalReports > 0 
+        ? Math.round((geriatricSeriousCount / geriatricTotalReports) * 100)
+        : 0,
+      sex_distribution: geriatricSexDistribution,
+    },
+    top_geriatric_reactions: geriatricReactions,
+    geriatric_specific_concerns: geriatricSpecificReactions.length > 0 ? {
+      note: "Reactions of particular concern in elderly patients",
+      reactions: geriatricSpecificReactions,
+    } : null,
+    younger_adult_comparison: adultComparison,
+    visualization_hint: {
+      type: "grouped_bar_chart",
+      group_by: "reaction",
+      series: ["Geriatric (65+)", "Younger Adult (18-64)"],
+      value: "report_count",
+      title: `Geriatric vs Younger Adult Safety Profile: ${args.drug_name}`,
+      x_axis: "reaction",
+      y_axis: "report_count",
+      secondary_chart: {
+        type: "pie_chart",
+        category: "sex",
+        value: "count",
+        title: "Geriatric Sex Distribution",
+        color_scheme: COLOR_SCHEMES.sex,
+      },
+    },
+    regulatory_note: "Geriatric safety data is important for ICH E7 compliance and trials in elderly populations",
+    disclaimer: FAERS_DISCLAIMER,
+  };
+}
+
+/**
+ * Get executive safety summary for a drug
+ */
+async function handleGetSafetySummary(args: {
+  drug_name: string;
+  include_label_warnings?: boolean;
+  include_recalls?: boolean;
+}): Promise<unknown> {
+  validateInput(args.drug_name);
+  
+  const includeLabelWarnings = args.include_label_warnings !== false;
+  const includeRecalls = args.include_recalls !== false;
+  
+  audit({ level: "info", event: "get_safety_summary", drug: args.drug_name });
+  
+  // Get total report count
+  const totalData = await fetchFAERS({
+    search: buildDrugSearch(args.drug_name),
+    limit: 1,
+  });
+  const totalReports = totalData.meta?.results?.total || 0;
+  
+  // Get serious event count
+  const seriousData = await fetchFAERS({
+    search: buildDrugSearch(args.drug_name) + "+AND+serious:1",
+    limit: 1,
+  });
+  const seriousReports = seriousData.meta?.results?.total || 0;
+  
+  // Get top 10 reactions
+  const reactionsData = await fetchFAERS({
+    search: buildDrugSearch(args.drug_name),
+    count: "patient.reaction.reactionmeddrapt.exact",
+    limit: 10,
+  });
+  const topReactions = reactionsData.results?.map((item: any) => ({
+    reaction: item.term,
+    count: item.count,
+  })) || [];
+  
+  // Get outcome breakdown
+  const outcomeData = await fetchFAERS({
+    search: buildDrugSearch(args.drug_name),
+    count: "patient.reaction.reactionoutcome",
+    limit: 10,
+  });
+  const outcomeMap: { [key: number]: string } = {
+    1: "Recovered",
+    2: "Recovering",
+    3: "Not recovered",
+    4: "Recovered with sequelae",
+    5: "Fatal",
+    6: "Unknown",
+  };
+  const outcomes = outcomeData.results?.map((item: any) => ({
+    outcome: outcomeMap[item.term] || `Code ${item.term}`,
+    count: item.count,
+  })) || [];
+  
+  // Get recent trend (last 2 years by quarter)
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setFullYear(endDate.getFullYear() - 2);
+  const startDateStr = startDate.toISOString().slice(0, 10).replace(/-/g, "");
+  const endDateStr = endDate.toISOString().slice(0, 10).replace(/-/g, "");
+  
+  const trendData = await fetchFAERS({
+    search: buildDrugSearch(args.drug_name) + `+AND+receivedate:[${startDateStr}+TO+${endDateStr}]`,
+    count: "receivedate",
+    limit: 100,
+  });
+  
+  // Calculate trend direction
+  let trendDirection = "stable";
+  let recentQuarterCount = 0;
+  let previousQuarterCount = 0;
+  
+  if (trendData.results && trendData.results.length > 0) {
+    const now = new Date();
+    const threeMonthsAgo = new Date(now);
+    threeMonthsAgo.setMonth(now.getMonth() - 3);
+    const sixMonthsAgo = new Date(now);
+    sixMonthsAgo.setMonth(now.getMonth() - 6);
+    
+    for (const item of trendData.results) {
+      const dateStr = item.time || item.term?.toString();
+      if (!dateStr) continue;
+      
+      const itemDate = new Date(
+        parseInt(dateStr.slice(0, 4)),
+        parseInt(dateStr.slice(4, 6)) - 1,
+        parseInt(dateStr.slice(6, 8))
+      );
+      
+      if (itemDate >= threeMonthsAgo) {
+        recentQuarterCount += item.count;
+      } else if (itemDate >= sixMonthsAgo) {
+        previousQuarterCount += item.count;
+      }
+    }
+    
+    if (previousQuarterCount > 0) {
+      const changePercent = ((recentQuarterCount - previousQuarterCount) / previousQuarterCount) * 100;
+      if (changePercent > 20) trendDirection = "increasing";
+      else if (changePercent < -20) trendDirection = "decreasing";
+    }
+  }
+  
+  // Get label warnings if requested
+  let labelWarnings: any = null;
+  if (includeLabelWarnings) {
+    const escapedName = args.drug_name.replace(/"/g, '\\"');
+    const labelSearch = `(openfda.brand_name:"${escapedName}"+OR+openfda.generic_name:"${escapedName}")`;
+    const labelUrl = await buildUrl(OPENFDA_LABEL_URL, { search: labelSearch, limit: 1 });
+    
+    try {
+      const labelResponse = await fetch(labelUrl);
+      const labelData = await labelResponse.json() as FAERSResponse;
+      
+      if (labelData.results && labelData.results.length > 0) {
+        const label = labelData.results[0];
+        labelWarnings = {
+          has_boxed_warning: !!label.boxed_warning,
+          boxed_warning_summary: label.boxed_warning?.[0]?.slice(0, 500) || null,
+          warnings_summary: label.warnings?.[0]?.slice(0, 500) || label.warnings_and_cautions?.[0]?.slice(0, 500) || null,
+        };
+      }
+    } catch {
+      // Continue without label data
+    }
+  }
+  
+  // Get recalls if requested
+  let recallSummary: any = null;
+  if (includeRecalls) {
+    const escapedName = args.drug_name.replace(/"/g, '\\"');
+    const recallSearch = `(product_description:"${escapedName}"+OR+openfda.brand_name:"${escapedName}")`;
+    const recallUrl = await buildUrl(OPENFDA_ENFORCEMENT_URL, { search: recallSearch, limit: 5 });
+    
+    try {
+      const recallResponse = await fetch(recallUrl);
+      const recallData = await recallResponse.json() as FAERSResponse;
+      
+      if (recallData.results && recallData.results.length > 0) {
+        recallSummary = {
+          total_recalls: recallData.meta?.results?.total || recallData.results.length,
+          recent_recalls: recallData.results.slice(0, 3).map((r: any) => ({
+            classification: r.classification,
+            date: r.recall_initiation_date,
+            reason: r.reason_for_recall?.slice(0, 200),
+          })),
+        };
+      }
+    } catch {
+      // Continue without recall data
+    }
+  }
+
+  return {
+    drug: args.drug_name,
+    report_summary: {
+      total_reports: totalReports,
+      serious_reports: seriousReports,
+      serious_percentage: totalReports > 0 ? Math.round((seriousReports / totalReports) * 100) : 0,
+    },
+    top_10_reactions: topReactions,
+    outcome_distribution: outcomes,
+    trend: {
+      direction: trendDirection,
+      recent_quarter_reports: recentQuarterCount,
+      previous_quarter_reports: previousQuarterCount,
+      period: "Last 6 months comparison",
+    },
+    label_warnings: labelWarnings,
+    recall_summary: recallSummary,
+    visualization_hint: {
+      type: "dashboard",
+      components: [
+        {
+          type: "stat_card",
+          metrics: ["total_reports", "serious_percentage", "trend_direction"],
+        },
+        {
+          type: "horizontal_bar_chart",
+          data: "top_10_reactions",
+          title: "Top Adverse Events",
+        },
+        {
+          type: "pie_chart",
+          data: "outcome_distribution",
+          title: "Outcomes",
+          color_scheme: COLOR_SCHEMES.outcomes,
+        },
+      ],
+    },
+    disclaimer: FAERS_DISCLAIMER,
+  };
+}
+
+/**
+ * Get pregnancy and lactation information from drug label
+ */
+async function handleGetPregnancyLactationInfo(args: {
+  drug_name: string;
+}): Promise<unknown> {
+  validateInput(args.drug_name);
+  
+  audit({ level: "info", event: "get_pregnancy_lactation_info", drug: args.drug_name });
+  
+  const escapedName = args.drug_name.replace(/"/g, '\\"');
+  const search = `(openfda.brand_name:"${escapedName}"+OR+openfda.generic_name:"${escapedName}")`;
+  
+  const url = await buildUrl(OPENFDA_LABEL_URL, { search, limit: 1 });
+  
+  try {
+    const response = await fetch(url);
+    const data = await response.json() as FAERSResponse;
+    
+    if (data.error || !data.results || data.results.length === 0) {
+      return {
+        message: `No drug label information found for "${args.drug_name}"`,
+        suggestion: "Try searching with the exact brand name or generic name as it appears on the FDA label",
+      };
+    }
+    
+    const label = data.results[0];
+    
+    // Extract pregnancy and lactation sections
+    const pregnancyInfo: any = {
+      brand_name: label.openfda?.brand_name?.[0] || args.drug_name,
+      generic_name: label.openfda?.generic_name?.[0] || args.drug_name,
+    };
+    
+    // Pregnancy section (new format post-2015)
+    if (label.pregnancy) {
+      pregnancyInfo.pregnancy = label.pregnancy[0];
+    }
+    
+    // Pregnancy category (old format)
+    if (label.pregnancy_category) {
+      pregnancyInfo.pregnancy_category = label.pregnancy_category[0];
+    }
+    
+    // Teratogenic effects
+    if (label.teratogenic_effects) {
+      pregnancyInfo.teratogenic_effects = label.teratogenic_effects[0];
+    }
+    
+    // Nursing mothers / Lactation
+    if (label.nursing_mothers) {
+      pregnancyInfo.nursing_mothers = label.nursing_mothers[0];
+    }
+    
+    if (label.lactation) {
+      pregnancyInfo.lactation = label.lactation[0];
+    }
+    
+    // Females and males of reproductive potential
+    if (label.females_and_males_of_reproductive_potential) {
+      pregnancyInfo.reproductive_potential = label.females_and_males_of_reproductive_potential[0];
+    }
+    
+    // Labor and delivery
+    if (label.labor_and_delivery) {
+      pregnancyInfo.labor_and_delivery = label.labor_and_delivery[0];
+    }
+    
+    // Check for contraindication in pregnancy
+    const contraindications = label.contraindications?.[0] || "";
+    const boxedWarning = label.boxed_warning?.[0] || "";
+    
+    const pregnancyContraindicated = 
+      contraindications.toLowerCase().includes("pregnan") ||
+      boxedWarning.toLowerCase().includes("pregnan") ||
+      (label.pregnancy?.[0] || "").toLowerCase().includes("contraindicated");
+    
+    // Determine risk level
+    let riskAssessment = "Unknown";
+    const pregnancyText = (pregnancyInfo.pregnancy || pregnancyInfo.pregnancy_category || "").toLowerCase();
+    
+    if (pregnancyContraindicated || pregnancyText.includes("contraindicated")) {
+      riskAssessment = "Contraindicated in pregnancy";
+    } else if (pregnancyText.includes("category x")) {
+      riskAssessment = "Category X - Contraindicated";
+    } else if (pregnancyText.includes("category d")) {
+      riskAssessment = "Category D - Positive evidence of risk";
+    } else if (pregnancyText.includes("category c")) {
+      riskAssessment = "Category C - Risk cannot be ruled out";
+    } else if (pregnancyText.includes("category b")) {
+      riskAssessment = "Category B - No evidence of risk in humans";
+    } else if (pregnancyText.includes("category a")) {
+      riskAssessment = "Category A - Adequate studies show no risk";
+    }
+    
+    return {
+      drug: args.drug_name,
+      pregnancy_risk_assessment: riskAssessment,
+      pregnancy_contraindicated: pregnancyContraindicated,
+      label_sections: pregnancyInfo,
+      protocol_guidance: {
+        exclusion_criteria_suggestion: pregnancyContraindicated 
+          ? "Pregnant women and women of childbearing potential not using adequate contraception should be excluded"
+          : "Consider pregnancy testing and contraception requirements based on risk assessment",
+        monitoring_suggestion: "Pregnancy testing at screening and periodic testing during study participation",
+      },
+      source: "FDA Drug Label via OpenFDA API",
+      note: "Always review the complete prescribing information for detailed pregnancy and lactation guidance",
+    };
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new McpError(ErrorCode.InternalError, `Failed to fetch pregnancy/lactation info: ${error.message}`);
+    }
+    throw error;
+  }
+}
+
 // ============================================================================
 // HANDLER ROUTER
 // ============================================================================
@@ -1472,6 +1976,15 @@ export async function handleTool(name: string, args: Record<string, unknown>): P
     
     case "get_pediatric_safety":
       return handleGetPediatricSafety(args as Parameters<typeof handleGetPediatricSafety>[0]);
+    
+    case "get_geriatric_safety":
+      return handleGetGeriatricSafety(args as Parameters<typeof handleGetGeriatricSafety>[0]);
+    
+    case "get_safety_summary":
+      return handleGetSafetySummary(args as Parameters<typeof handleGetSafetySummary>[0]);
+    
+    case "get_pregnancy_lactation_info":
+      return handleGetPregnancyLactationInfo(args as Parameters<typeof handleGetPregnancyLactationInfo>[0]);
     
     default:
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
