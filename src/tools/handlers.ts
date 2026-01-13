@@ -142,33 +142,37 @@ const COLOR_SCHEMES = {
 
 /**
  * Build URL for OpenFDA API request
+ * Note: OpenFDA requires special handling - the search parameter should NOT be fully URL encoded
+ * because it uses + for AND/OR operators which must remain as literal + signs
  */
 async function buildUrl(baseUrl: string, params: FAERSSearchParams): Promise<string> {
-  const urlParams = new URLSearchParams();
+  const urlParts: string[] = [];
   
   // Get API key from env or Key Vault
   const apiKey = await getApiKey();
   if (apiKey) {
-    urlParams.append("api_key", apiKey);
+    urlParts.push(`api_key=${encodeURIComponent(apiKey)}`);
   }
   
+  // OpenFDA search queries use + for operators, so we can't use URLSearchParams
+  // which would encode + as %2B. We need to keep + as literal +
   if (params.search) {
-    urlParams.append("search", params.search);
+    urlParts.push(`search=${params.search}`);
   }
   
   if (params.count) {
-    urlParams.append("count", params.count);
+    urlParts.push(`count=${params.count}`);
   }
   
   if (params.limit) {
-    urlParams.append("limit", params.limit.toString());
+    urlParts.push(`limit=${params.limit.toString()}`);
   }
   
   if (params.skip) {
-    urlParams.append("skip", params.skip.toString());
+    urlParts.push(`skip=${params.skip.toString()}`);
   }
   
-  return `${baseUrl}?${urlParams.toString()}`;
+  return `${baseUrl}?${urlParts.join("&")}`;
 }
 
 /**
