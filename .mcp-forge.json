@@ -1,0 +1,27 @@
+{
+  "version": "2.0.0",
+  "name": "drug-safety-mcp",
+  "generatedAt": "2026-01-13T04:51:48.430Z",
+  "deployment": {
+    "mode": "standalone"
+  },
+  "core": {
+    "auth": [
+      "azure_ad",
+      "api_key"
+    ],
+    "credentialStore": "azure-keyvault",
+    "features": [
+      "rate-limiting",
+      "input-validation",
+      "audit-logging",
+      "graceful-shutdown",
+      "dual-mode"
+    ]
+  },
+  "paths": {
+    "core": "src/core/",
+    "tools": "src/tools/",
+    "entry": "src/index.ts"
+  }
+}

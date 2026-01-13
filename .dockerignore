@@ -1,0 +1,42 @@
+# Dependencies (installed fresh in Docker)
+node_modules/
+
+# Build output (built fresh in Docker)
+dist/
+
+# Development files
+.git/
+.gitignore
+.env
+.env.*
+!.env.example
+
+# NOTE: .npmrc is NOT excluded - needed for Azure Artifacts auth
+# The Dockerfile handles auth token injection and cleanup
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.cursor/
+
+# Test & Coverage
+coverage/
+.nyc_output/
+tests/
+*.test.ts
+*.spec.ts
+
+# Documentation
+*.md
+docs/
+
+# CI/CD
+azure-pipelines.yml
+.github/
+
+# Misc
+.DS_Store
+*.log
+npm-debug.log*
