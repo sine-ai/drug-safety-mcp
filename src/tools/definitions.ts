@@ -206,4 +206,86 @@ export const TOOLS: ToolDefinition[] = [
       required: [],
     },
   },
+
+  // -------------------------------------------------------------------------
+  // GET DRUG LABEL INFO
+  // -------------------------------------------------------------------------
+  {
+    name: "get_drug_label_info",
+    description: "Get FDA drug label information including indications, warnings, contraindications, adverse reactions, and boxed warnings. Provides official prescribing information context.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        drug_name: {
+          type: "string",
+          description: "Brand name or generic name of the drug (e.g., 'Humira', 'adalimumab')",
+        },
+        sections: {
+          type: "array",
+          items: { type: "string" },
+          description: "Specific label sections to retrieve (e.g., ['warnings', 'adverse_reactions', 'contraindications']). Returns all key sections if not specified.",
+        },
+      },
+      required: ["drug_name"],
+    },
+  },
+
+  // -------------------------------------------------------------------------
+  // GET RECALL INFO
+  // -------------------------------------------------------------------------
+  {
+    name: "get_recall_info",
+    description: "Search FDA drug recalls and enforcement actions. Returns recall classification, reason, distribution, and status for drug safety issues.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        drug_name: {
+          type: "string",
+          description: "Brand name or generic name of the drug to search recalls for",
+        },
+        classification: {
+          type: "string",
+          enum: ["Class I", "Class II", "Class III"],
+          description: "Recall classification: Class I (most serious - may cause death), Class II (may cause temporary health problems), Class III (unlikely to cause adverse health consequences)",
+        },
+        status: {
+          type: "string",
+          enum: ["Ongoing", "Completed", "Terminated", "Pending"],
+          description: "Filter by recall status",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of results to return (default: 10)",
+        },
+      },
+      required: ["drug_name"],
+    },
+  },
+
+  // -------------------------------------------------------------------------
+  // SEARCH BY INDICATION
+  // -------------------------------------------------------------------------
+  {
+    name: "search_by_indication",
+    description: "Find adverse events for drugs used for a specific indication/condition. Useful for comparing safety profiles of drugs in the same therapeutic class.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        indication: {
+          type: "string",
+          description: "Medical condition or indication (e.g., 'diabetes', 'rheumatoid arthritis', 'hypertension')",
+        },
+        group_by: {
+          type: "string",
+          enum: ["drug", "reaction"],
+          description: "Group results by drug name or by reaction type (default: drug)",
+        },
+        limit: {
+          type: "number",
+          description: "Number of top results to return (default: 20)",
+        },
+      },
+      required: ["indication"],
+    },
+  },
 ];

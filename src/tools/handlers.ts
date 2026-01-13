@@ -11,7 +11,9 @@ import { ErrorCode, McpError, validateInput, audit } from "@sineai/mcp-core";
 // CONFIGURATION
 // ============================================================================
 
-const OPENFDA_BASE_URL = "https://api.fda.gov/drug/event.json";
+const OPENFDA_FAERS_URL = "https://api.fda.gov/drug/event.json";
+const OPENFDA_LABEL_URL = "https://api.fda.gov/drug/label.json";
+const OPENFDA_ENFORCEMENT_URL = "https://api.fda.gov/drug/enforcement.json";
 
 // API key from MCP config (env var). If not provided, uses free tier.
 // Free tier: 240 requests/min, 1,000 requests/day per IP
@@ -69,9 +71,9 @@ Source: FDA Adverse Event Reporting System (FAERS) via OpenFDA API
 // ============================================================================
 
 /**
- * Build URL for FAERS API request
+ * Build URL for OpenFDA API request
  */
-function buildUrl(params: FAERSSearchParams): string {
+function buildUrl(baseUrl: string, params: FAERSSearchParams): string {
   const urlParams = new URLSearchParams();
   
   // Use API key from MCP config if provided
@@ -95,14 +97,14 @@ function buildUrl(params: FAERSSearchParams): string {
     urlParams.append("skip", params.skip.toString());
   }
   
-  return `${OPENFDA_BASE_URL}?${urlParams.toString()}`;
+  return `${baseUrl}?${urlParams.toString()}`;
 }
 
 /**
  * Fetch data from FAERS API
  */
 async function fetchFAERS(params: FAERSSearchParams): Promise<FAERSResponse> {
-  const url = buildUrl(params);
+  const url = buildUrl(OPENFDA_FAERS_URL, params);
   
   try {
     const response = await fetch(url);
@@ -623,6 +625,229 @@ async function handleGetDataInfo(): Promise<unknown> {
   };
 }
 
+/**
+ * Get FDA drug label information
+ */
+async function handleGetDrugLabelInfo(args: {
+  drug_name: string;
+  sections?: string[];
+}): Promise<unknown> {
+  validateInput(args.drug_name);
+  
+  audit({ level: "info", event: "get_drug_label_info", drug: args.drug_name });
+  
+  const escapedName = args.drug_name.replace(/"/g, '\\"');
+  const search = `(openfda.brand_name:"${escapedName}"+OR+openfda.generic_name:"${escapedName}")`;
+  
+  const url = buildUrl(OPENFDA_LABEL_URL, { search, limit: 1 });
+  
+  try {
+    const response = await fetch(url);
+    const data = await response.json() as FAERSResponse;
+    
+    if (data.error || !data.results || data.results.length === 0) {
+      return {
+        message: `No drug label information found for "${args.drug_name}"`,
+        suggestion: "Try searching with the exact brand name or generic name as it appears on the FDA label",
+      };
+    }
+    
+    const label = data.results[0];
+    
+    // Extract key sections
+    const allSections: { [key: string]: any } = {
+      brand_name: label.openfda?.brand_name?.[0] || "Unknown",
+      generic_name: label.openfda?.generic_name?.[0] || "Unknown",
+      manufacturer: label.openfda?.manufacturer_name?.[0] || "Unknown",
+      product_type: label.openfda?.product_type?.[0] || "Unknown",
+      route: label.openfda?.route || [],
+      substance_name: label.openfda?.substance_name || [],
+      boxed_warning: label.boxed_warning?.[0] || null,
+      warnings: label.warnings?.[0] || label.warnings_and_cautions?.[0] || null,
+      contraindications: label.contraindications?.[0] || null,
+      adverse_reactions: label.adverse_reactions?.[0] || null,
+      drug_interactions: label.drug_interactions?.[0] || null,
+      indications_and_usage: label.indications_and_usage?.[0] || null,
+      dosage_and_administration: label.dosage_and_administration?.[0] || null,
+      pregnancy: label.pregnancy?.[0] || label.pregnancy_or_breast_feeding?.[0] || null,
+      pediatric_use: label.pediatric_use?.[0] || null,
+      geriatric_use: label.geriatric_use?.[0] || null,
+      overdosage: label.overdosage?.[0] || null,
+    };
+    
+    // Filter to requested sections if specified
+    let result: { [key: string]: any };
+    if (args.sections && args.sections.length > 0) {
+      result = {};
+      for (const section of args.sections) {
+        const key = section.toLowerCase().replace(/ /g, "_");
+        if (allSections[key] !== undefined) {
+          result[key] = allSections[key];
+        }
+      }
+      // Always include basic drug info
+      result.brand_name = allSections.brand_name;
+      result.generic_name = allSections.generic_name;
+    } else {
+      result = allSections;
+    }
+    
+    // Remove null values
+    Object.keys(result).forEach(key => {
+      if (result[key] === null) {
+        delete result[key];
+      }
+    });
+    
+    return {
+      drug: args.drug_name,
+      label_info: result,
+      has_boxed_warning: !!label.boxed_warning,
+      source: "FDA Drug Label via OpenFDA API",
+    };
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new McpError(ErrorCode.InternalError, `Failed to fetch drug label: ${error.message}`);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Get FDA drug recall information
+ */
+async function handleGetRecallInfo(args: {
+  drug_name: string;
+  classification?: string;
+  status?: string;
+  limit?: number;
+}): Promise<unknown> {
+  validateInput(args.drug_name);
+  
+  audit({ level: "info", event: "get_recall_info", drug: args.drug_name });
+  
+  const escapedName = args.drug_name.replace(/"/g, '\\"');
+  let search = `(product_description:"${escapedName}"+OR+openfda.brand_name:"${escapedName}"+OR+openfda.generic_name:"${escapedName}")`;
+  
+  if (args.classification) {
+    search += `+AND+classification:"${args.classification}"`;
+  }
+  
+  if (args.status) {
+    search += `+AND+status:"${args.status}"`;
+  }
+  
+  const url = buildUrl(OPENFDA_ENFORCEMENT_URL, { search, limit: args.limit || 10 });
+  
+  try {
+    const response = await fetch(url);
+    const data = await response.json() as FAERSResponse;
+    
+    if (data.error || !data.results || data.results.length === 0) {
+      return {
+        message: `No recall information found for "${args.drug_name}"`,
+        note: "This may mean the drug has not been recalled, or the search term doesn't match FDA records",
+      };
+    }
+    
+    const recalls = data.results.map((recall: any) => ({
+      recall_number: recall.recall_number,
+      classification: recall.classification,
+      classification_description: 
+        recall.classification === "Class I" 
+          ? "Most serious - may cause death or serious health problems"
+          : recall.classification === "Class II"
+            ? "May cause temporary or reversible health problems"
+            : "Unlikely to cause adverse health consequences",
+      status: recall.status,
+      recall_initiation_date: recall.recall_initiation_date,
+      report_date: recall.report_date,
+      reason_for_recall: recall.reason_for_recall,
+      product_description: recall.product_description,
+      recalling_firm: recall.recalling_firm,
+      distribution_pattern: recall.distribution_pattern,
+      voluntary_mandated: recall.voluntary_mandated,
+      city: recall.city,
+      state: recall.state,
+      country: recall.country,
+    }));
+    
+    // Count by classification
+    const classificationCounts: { [key: string]: number } = {};
+    recalls.forEach((r: any) => {
+      classificationCounts[r.classification] = (classificationCounts[r.classification] || 0) + 1;
+    });
+    
+    return {
+      drug: args.drug_name,
+      total_recalls: data.meta?.results?.total || recalls.length,
+      returned: recalls.length,
+      classification_summary: classificationCounts,
+      recalls,
+      source: "FDA Enforcement Reports via OpenFDA API",
+    };
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new McpError(ErrorCode.InternalError, `Failed to fetch recall info: ${error.message}`);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Search adverse events by indication
+ */
+async function handleSearchByIndication(args: {
+  indication: string;
+  group_by?: string;
+  limit?: number;
+}): Promise<unknown> {
+  validateInput(args.indication);
+  
+  const groupBy = args.group_by || "drug";
+  
+  audit({ level: "info", event: "search_by_indication", indication: args.indication, group_by: groupBy });
+  
+  const escapedIndication = args.indication.replace(/"/g, '\\"');
+  const search = `patient.drug.drugindication:"${escapedIndication}"`;
+  
+  let countField: string;
+  if (groupBy === "reaction") {
+    countField = "patient.reaction.reactionmeddrapt.exact";
+  } else {
+    countField = "patient.drug.openfda.brand_name.exact";
+  }
+  
+  const data = await fetchFAERS({
+    search,
+    count: countField,
+    limit: args.limit || 20,
+  });
+  
+  if (!data.results || data.results.length === 0) {
+    return {
+      message: `No adverse events found for indication "${args.indication}"`,
+      suggestion: "Try using different terms for the indication (e.g., 'type 2 diabetes' vs 'diabetes mellitus')",
+      disclaimer: FAERS_DISCLAIMER,
+    };
+  }
+  
+  const results = data.results.map((item: any) => ({
+    [groupBy === "reaction" ? "reaction" : "drug_name"]: item.term,
+    report_count: item.count,
+  }));
+  
+  return {
+    indication: args.indication,
+    grouped_by: groupBy,
+    results,
+    note: groupBy === "drug" 
+      ? "Shows drugs most commonly reported with this indication - higher counts may reflect more widely used drugs"
+      : "Shows most common adverse reactions for drugs used for this indication",
+    disclaimer: FAERS_DISCLAIMER,
+  };
+}
+
 // ============================================================================
 // HANDLER ROUTER
 // ============================================================================
@@ -652,6 +877,15 @@ export async function handleTool(name: string, args: Record<string, unknown>): P
     
     case "get_data_info":
       return handleGetDataInfo();
+    
+    case "get_drug_label_info":
+      return handleGetDrugLabelInfo(args as Parameters<typeof handleGetDrugLabelInfo>[0]);
+    
+    case "get_recall_info":
+      return handleGetRecallInfo(args as Parameters<typeof handleGetRecallInfo>[0]);
+    
+    case "search_by_indication":
+      return handleSearchByIndication(args as Parameters<typeof handleSearchByIndication>[0]);
     
     default:
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);

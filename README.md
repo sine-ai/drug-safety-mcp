@@ -13,6 +13,9 @@ MCP server for FDA Adverse Event Reporting System (FAERS) data via the OpenFDA A
 - View reporting trends over time
 - Find drugs associated with specific reactions
 - Identify commonly co-reported drugs
+- **Get FDA drug label information** (warnings, contraindications, boxed warnings)
+- **Search FDA drug recalls** and enforcement actions
+- **Search by indication** to compare drugs in the same therapeutic class
 
 ## Authentication
 
@@ -22,11 +25,11 @@ This MCP is configured for **Standalone Mode** - it handles its own authenticati
 
 | Secret Name | Description |
 |-------------|-------------|
-| `auth-mode` | `azure_ad`, `api_key`, or `none` |
-| `azure-tenant-id` | Azure AD tenant ID |
-| `azure-client-id` | App registration client ID |
-| `azure-allowed-groups` | Comma-separated group IDs |
-| `api-keys` | Comma-separated API keys |
+| \`auth-mode\` | \`azure_ad\`, \`api_key\`, or \`none\` |
+| \`azure-tenant-id\` | Azure AD tenant ID |
+| \`azure-client-id\` | App registration client ID |
+| \`azure-allowed-groups\` | Comma-separated group IDs |
+| \`api-keys\` | Comma-separated API keys |
 
 ### OpenFDA API Key (Optional)
 
@@ -38,7 +41,7 @@ The OpenFDA API works without an API key, but with limits:
 1. Go to https://open.fda.gov/apis/authentication/
 2. Enter your email address
 3. Check your email for the API key
-4. Add to your MCP config as `OPENFDA_API_KEY` environment variable
+4. Add to your MCP config as \`OPENFDA_API_KEY\` environment variable
 
 If no API key is provided, the MCP will run in free mode automatically.
 
@@ -74,6 +77,7 @@ npm run start:remote
 
 ## Available Tools
 
+### Adverse Event Tools
 | Tool | Description |
 |------|-------------|
 | \`search_adverse_events\` | Search AE reports by drug, reaction, date |
@@ -83,6 +87,13 @@ npm run start:remote
 | \`get_reporting_trends\` | AE volume over time by year/quarter/month |
 | \`search_by_reaction\` | Find drugs associated with a reaction |
 | \`get_concomitant_drugs\` | Find commonly co-reported drugs |
+| \`search_by_indication\` | Find AEs for drugs used for a specific condition |
+
+### Drug Information Tools
+| Tool | Description |
+|------|-------------|
+| \`get_drug_label_info\` | FDA drug label (warnings, contraindications, boxed warnings) |
+| \`get_recall_info\` | FDA drug recalls and enforcement actions |
 | \`get_data_info\` | Database info and limitations |
 
 ## Example Queries
@@ -94,6 +105,9 @@ Once connected, you can ask:
 - "Show me serious adverse events for metformin in 2023"
 - "What drugs are most commonly associated with Stevens-Johnson syndrome?"
 - "What's the trend in adverse event reports for Ozempic over the past 3 years?"
+- "Get the boxed warnings and contraindications for Xarelto"
+- "Has Zantac been recalled? What were the reasons?"
+- "What adverse events are reported for diabetes medications?"
 
 ## Data Limitations
 
