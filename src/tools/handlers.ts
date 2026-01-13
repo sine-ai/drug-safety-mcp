@@ -67,6 +67,46 @@ Source: FDA Adverse Event Reporting System (FAERS) via OpenFDA API
 `;
 
 // ============================================================================
+// COLOR SCHEMES FOR VISUALIZATION
+// ============================================================================
+
+const COLOR_SCHEMES = {
+  outcomes: {
+    "Recovered": "#22c55e",
+    "Recovering": "#84cc16",
+    "Not recovered": "#f59e0b",
+    "Recovered with sequelae": "#f97316",
+    "Fatal": "#ef4444",
+    "Unknown": "#9ca3af",
+  },
+  seriousness: {
+    "death": "#991b1b",
+    "hospitalization": "#dc2626",
+    "life_threatening": "#f97316",
+    "disability": "#eab308",
+    "congenital_anomaly": "#a855f7",
+    "other": "#6b7280",
+  },
+  sex: {
+    "Male": "#3b82f6",
+    "Female": "#ec4899",
+    "Unknown": "#9ca3af",
+  },
+  reporter: {
+    "Physician": "#2563eb",
+    "Pharmacist": "#7c3aed",
+    "Other health professional": "#0891b2",
+    "Consumer": "#16a34a",
+    "Lawyer": "#dc2626",
+  },
+  recall_classification: {
+    "Class I": "#dc2626",
+    "Class II": "#f59e0b",
+    "Class III": "#22c55e",
+  },
+};
+
+// ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 
@@ -316,10 +356,65 @@ async function handleGetEventCounts(args: {
     };
   });
   
+  // Build visualization hint based on group_by type
+  const visualizationHints: { [key: string]: any } = {
+    reaction: {
+      type: "horizontal_bar_chart",
+      x_axis: "count",
+      y_axis: "reaction",
+      title: `Top Adverse Events for ${args.drug_name}`,
+      sort: "descending",
+    },
+    outcome: {
+      type: "pie_chart",
+      category: "outcome",
+      value: "count",
+      title: `Outcome Distribution for ${args.drug_name}`,
+      color_scheme: COLOR_SCHEMES.outcomes,
+    },
+    sex: {
+      type: "pie_chart",
+      category: "sex",
+      value: "count",
+      title: `Patient Sex Distribution for ${args.drug_name}`,
+      color_scheme: COLOR_SCHEMES.sex,
+    },
+    age: {
+      type: "histogram",
+      x_axis: "age",
+      y_axis: "count",
+      title: `Patient Age Distribution for ${args.drug_name}`,
+      bin_size: 10,
+    },
+    country: {
+      type: "horizontal_bar_chart",
+      x_axis: "count",
+      y_axis: "country",
+      title: `Reports by Country for ${args.drug_name}`,
+      sort: "descending",
+      max_items: 15,
+    },
+    reporter_type: {
+      type: "pie_chart",
+      category: "reporter_type",
+      value: "count",
+      title: `Reporter Types for ${args.drug_name}`,
+      color_scheme: COLOR_SCHEMES.reporter,
+    },
+    route: {
+      type: "horizontal_bar_chart",
+      x_axis: "count",
+      y_axis: "route",
+      title: `Administration Routes for ${args.drug_name}`,
+      sort: "descending",
+    },
+  };
+
   return {
     drug: args.drug_name,
     grouped_by: args.group_by,
     results: formattedResults,
+    visualization_hint: visualizationHints[args.group_by],
     disclaimer: FAERS_DISCLAIMER,
   };
 }
@@ -359,6 +454,16 @@ async function handleCompareSafetyProfiles(args: {
   
   return {
     comparison: comparisons,
+    visualization_hint: {
+      type: "grouped_bar_chart",
+      group_by: "reaction",
+      series: "drug_name",
+      value: "count",
+      title: "Safety Profile Comparison",
+      x_axis: "reaction",
+      y_axis: "count",
+      legend: args.drug_names,
+    },
     note: "Counts are not normalized by usage - a drug with more reports may simply be more widely used",
     disclaimer: FAERS_DISCLAIMER,
   };
@@ -423,11 +528,43 @@ async function handleGetSeriousEvents(args: {
       : "Unknown",
   }));
   
+  // Calculate seriousness breakdown for visualization
+  const seriousnessBreakdown: { [key: string]: number } = {
+    death: 0,
+    hospitalization: 0,
+    life_threatening: 0,
+    disability: 0,
+    congenital_anomaly: 0,
+    other: 0,
+  };
+  
+  results.forEach((r: any) => {
+    if (r.seriousness.death) seriousnessBreakdown.death++;
+    if (r.seriousness.hospitalization) seriousnessBreakdown.hospitalization++;
+    if (r.seriousness.life_threatening) seriousnessBreakdown.life_threatening++;
+    if (r.seriousness.disability) seriousnessBreakdown.disability++;
+    if (r.seriousness.congenital_anomaly) seriousnessBreakdown.congenital_anomaly++;
+    if (r.seriousness.other) seriousnessBreakdown.other++;
+  });
+
   return {
     drug: args.drug_name,
     outcome_filter: args.outcome_type || "all serious",
     total_matching: data.meta?.results?.total,
+    seriousness_breakdown: Object.entries(seriousnessBreakdown)
+      .filter(([_, count]) => count > 0)
+      .map(([category, count]) => ({ category, count })),
     results,
+    visualization_hint: {
+      type: "stacked_bar_chart",
+      x_axis: "category",
+      y_axis: "count",
+      title: `Serious Event Breakdown for ${args.drug_name}`,
+      categories: ["death", "hospitalization", "life_threatening", "disability", "congenital_anomaly", "other"],
+      color_scheme: COLOR_SCHEMES.seriousness,
+      x_label: "Seriousness Type",
+      y_label: "Number of Reports",
+    },
     disclaimer: FAERS_DISCLAIMER,
   };
 }
@@ -505,6 +642,15 @@ async function handleGetReportingTrends(args: {
     granularity,
     period: `${years} years`,
     trends: sortedTrends,
+    visualization_hint: {
+      type: "line_chart",
+      x_axis: "period",
+      y_axis: "count",
+      title: `Adverse Event Reports for ${args.drug_name} Over Time`,
+      x_label: granularity === "year" ? "Year" : granularity === "quarter" ? "Quarter" : "Month",
+      y_label: "Report Count",
+      show_trend_line: true,
+    },
     note: "Increases in reports may reflect increased usage, publicity, or actual safety signals",
     disclaimer: FAERS_DISCLAIMER,
   };
@@ -540,6 +686,16 @@ async function handleSearchByReaction(args: {
       drug_name: item.term,
       report_count: item.count,
     })),
+    visualization_hint: {
+      type: "horizontal_bar_chart",
+      x_axis: "report_count",
+      y_axis: "drug_name",
+      title: `Drugs Associated with ${args.reaction}`,
+      sort: "descending",
+      max_items: 20,
+      x_label: "Number of Reports",
+      y_label: "Drug Name",
+    },
     note: "Higher counts may reflect more widely used drugs, not necessarily higher risk",
     disclaimer: FAERS_DISCLAIMER,
   };
@@ -581,6 +737,15 @@ async function handleGetConcomitantDrugs(args: {
       drug_name: item.term,
       co_report_count: item.count,
     })),
+    visualization_hint: {
+      type: "horizontal_bar_chart",
+      x_axis: "co_report_count",
+      y_axis: "drug_name",
+      title: `Drugs Co-Reported with ${args.drug_name}`,
+      sort: "descending",
+      x_label: "Co-Report Count",
+      y_label: "Drug Name",
+    },
     note: "These are drugs commonly reported alongside the primary drug in AE reports - does not imply interaction",
     disclaimer: FAERS_DISCLAIMER,
   };
@@ -784,6 +949,25 @@ async function handleGetRecallInfo(args: {
       returned: recalls.length,
       classification_summary: classificationCounts,
       recalls,
+      visualization_hint: {
+        type: "timeline",
+        x_axis: "recall_initiation_date",
+        label: "reason_for_recall",
+        title: `Recall History for ${args.drug_name}`,
+        color_by: "classification",
+        color_scheme: COLOR_SCHEMES.recall_classification,
+        secondary_chart: {
+          type: "pie_chart",
+          category: "classification",
+          value: "count",
+          title: "Recalls by Classification",
+          data: Object.entries(classificationCounts).map(([classification, count]) => ({
+            classification,
+            count,
+          })),
+          color_scheme: COLOR_SCHEMES.recall_classification,
+        },
+      },
       source: "FDA Enforcement Reports via OpenFDA API",
     };
   } catch (error) {
@@ -837,10 +1021,31 @@ async function handleSearchByIndication(args: {
     report_count: item.count,
   }));
   
+  const visualizationHint = groupBy === "drug"
+    ? {
+        type: "horizontal_bar_chart",
+        x_axis: "report_count",
+        y_axis: "drug_name",
+        title: `Drugs Used for ${args.indication} (by AE Report Count)`,
+        sort: "descending",
+        x_label: "Number of AE Reports",
+        y_label: "Drug Name",
+      }
+    : {
+        type: "horizontal_bar_chart",
+        x_axis: "report_count",
+        y_axis: "reaction",
+        title: `Top Adverse Events for ${args.indication} Medications`,
+        sort: "descending",
+        x_label: "Number of Reports",
+        y_label: "Adverse Reaction",
+      };
+
   return {
     indication: args.indication,
     grouped_by: groupBy,
     results,
+    visualization_hint: visualizationHint,
     note: groupBy === "drug" 
       ? "Shows drugs most commonly reported with this indication - higher counts may reflect more widely used drugs"
       : "Shows most common adverse reactions for drugs used for this indication",
