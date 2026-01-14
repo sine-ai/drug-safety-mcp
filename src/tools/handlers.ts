@@ -5,7 +5,81 @@
  * Uses OpenFDA API for drug safety data.
  */
 
-import { ErrorCode, McpError, validateInput, audit, secrets } from "@sineai/mcp-core";
+// ============================================================================
+// ERROR HANDLING
+// ============================================================================
+
+class McpError extends Error {
+  constructor(public code: string, message: string) {
+    super(message);
+    this.name = "McpError";
+  }
+}
+
+const ErrorCode = {
+  InvalidParams: "INVALID_PARAMS",
+  InternalError: "INTERNAL_ERROR",
+  MethodNotFound: "METHOD_NOT_FOUND",
+} as const;
+
+// ============================================================================
+// VALIDATION & LOGGING
+// ============================================================================
+
+/**
+ * Validate string input with helpful error messages
+ */
+function validateInput(input: string, fieldName = "input"): void {
+  if (input === undefined || input === null) {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      `Missing required parameter: ${fieldName}. Please provide a valid value.`
+    );
+  }
+  if (typeof input !== "string") {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      `Invalid type for ${fieldName}: expected string, got ${typeof input}.`
+    );
+  }
+  if (input.trim().length === 0) {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      `Empty value for ${fieldName}. Please provide a non-empty string.`
+    );
+  }
+}
+
+/**
+ * Validate numeric input with helpful error messages
+ */
+function validateNumber(input: number | undefined, fieldName: string, min?: number, max?: number): void {
+  if (input === undefined) return;
+  if (typeof input !== "number" || isNaN(input)) {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      `Invalid type for ${fieldName}: expected number, got ${typeof input}.`
+    );
+  }
+  if (min !== undefined && input < min) {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      `${fieldName} must be at least ${min}, got ${input}.`
+    );
+  }
+  if (max !== undefined && input > max) {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      `${fieldName} must be at most ${max}, got ${input}.`
+    );
+  }
+}
+
+function audit(data: Record<string, unknown>): void {
+  if (process.env.LOG_LEVEL === "debug") {
+    console.error(`[AUDIT] ${JSON.stringify(data)}`);
+  }
+}
 
 // ============================================================================
 // CONFIGURATION
@@ -15,38 +89,18 @@ const OPENFDA_FAERS_URL = "https://api.fda.gov/drug/event.json";
 const OPENFDA_LABEL_URL = "https://api.fda.gov/drug/label.json";
 const OPENFDA_ENFORCEMENT_URL = "https://api.fda.gov/drug/enforcement.json";
 
-// API key cache - loaded once from env or Key Vault
+// API key cache - loaded once from environment
 let OPENFDA_API_KEY: string | null = null;
 
 /**
- * Get OpenFDA API key from environment or Key Vault
- * Priority: 1) Environment variable, 2) Key Vault secret, 3) Free tier (empty)
+ * Get OpenFDA API key from environment variable
+ * Priority: Environment variable OPENFDA_API_KEY, otherwise free tier (empty)
  */
-async function getApiKey(): Promise<string> {
-  // Return cached value if already loaded
+function getApiKey(): string {
   if (OPENFDA_API_KEY !== null) {
     return OPENFDA_API_KEY;
   }
-  
-  // Check environment variable first (from MCP config)
-  if (process.env.OPENFDA_API_KEY) {
-    OPENFDA_API_KEY = process.env.OPENFDA_API_KEY;
-    return OPENFDA_API_KEY;
-  }
-  
-  // Try Key Vault
-  try {
-    const keyVaultKey = await secrets.get("openfda-api-key");
-    if (keyVaultKey) {
-      OPENFDA_API_KEY = keyVaultKey;
-      return OPENFDA_API_KEY;
-    }
-  } catch {
-    // Key Vault not available or secret not found
-  }
-  
-  // Use free tier
-  OPENFDA_API_KEY = "";
+  OPENFDA_API_KEY = process.env.OPENFDA_API_KEY || "";
   return OPENFDA_API_KEY;
 }
 
@@ -145,11 +199,10 @@ const COLOR_SCHEMES = {
  * Note: OpenFDA requires special handling - the search parameter should NOT be fully URL encoded
  * because it uses + for AND/OR operators which must remain as literal + signs
  */
-async function buildUrl(baseUrl: string, params: FAERSSearchParams): Promise<string> {
+function buildUrl(baseUrl: string, params: FAERSSearchParams): string {
   const urlParts: string[] = [];
   
-  // Get API key from env or Key Vault
-  const apiKey = await getApiKey();
+  const apiKey = getApiKey();
   if (apiKey) {
     urlParts.push(`api_key=${encodeURIComponent(apiKey)}`);
   }
@@ -176,22 +229,43 @@ async function buildUrl(baseUrl: string, params: FAERSSearchParams): Promise<str
 }
 
 /**
- * Fetch data from FAERS API
+ * Fetch data from FAERS API with helpful error handling
  */
 async function fetchFAERS(params: FAERSSearchParams): Promise<FAERSResponse> {
-  const url = await buildUrl(OPENFDA_FAERS_URL, params);
-  
-  // Debug logging
-  console.error(`[DEBUG] Fetching FAERS URL: ${url}`);
+  const url = buildUrl(OPENFDA_FAERS_URL, params);
   
   try {
     const response = await fetch(url);
+    
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          "No results found. Try a different drug name or check the spelling. Use brand name (e.g., 'Humira') or generic name (e.g., 'adalimumab')."
+        );
+      }
+      if (response.status === 429) {
+        throw new McpError(
+          ErrorCode.InternalError,
+          "OpenFDA API rate limit exceeded. Please wait a moment and try again. Consider setting OPENFDA_API_KEY for higher limits."
+        );
+      }
+      throw new McpError(
+        ErrorCode.InternalError,
+        `OpenFDA API returned status ${response.status}. Please try again later.`
+      );
+    }
+    
     const data = await response.json() as FAERSResponse;
     
-    console.error(`[DEBUG] Response status: ${response.status}, has error: ${!!data.error}`);
-    
     if (data.error) {
-      console.error(`[DEBUG] API Error: ${JSON.stringify(data.error)}`);
+      // Provide helpful suggestions based on error type
+      if (data.error.message.includes("No matches found")) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `No matches found for the search criteria. Suggestions: 1) Check drug name spelling, 2) Try brand name instead of generic (or vice versa), 3) Use simpler search terms.`
+        );
+      }
       throw new McpError(ErrorCode.InternalError, `FAERS API Error: ${data.error.message}`);
     }
     
@@ -200,8 +274,13 @@ async function fetchFAERS(params: FAERSSearchParams): Promise<FAERSResponse> {
     if (error instanceof McpError) {
       throw error;
     }
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        "Network error: Unable to connect to OpenFDA API. Please check your internet connection and try again."
+      );
+    }
     if (error instanceof Error) {
-      console.error(`[DEBUG] Fetch error: ${error.message}`);
       throw new McpError(ErrorCode.InternalError, `Failed to fetch FAERS data: ${error.message}`);
     }
     throw error;
@@ -257,10 +336,11 @@ async function handleSearchAdverseEvents(args: {
   serious?: boolean;
   limit?: number;
 }): Promise<unknown> {
-  validateInput(args.drug_name);
-  if (args.reaction) validateInput(args.reaction);
-  if (args.start_date) validateInput(args.start_date);
-  if (args.end_date) validateInput(args.end_date);
+  validateInput(args.drug_name, "drug_name");
+  if (args.reaction) validateInput(args.reaction, "reaction");
+  if (args.start_date) validateInput(args.start_date, "start_date");
+  if (args.end_date) validateInput(args.end_date, "end_date");
+  validateNumber(args.limit, "limit", 1, 100);
   
   audit({ level: "info", event: "search_adverse_events", drug: args.drug_name });
   
@@ -336,7 +416,9 @@ async function handleGetEventCounts(args: {
   group_by: string;
   limit?: number;
 }): Promise<unknown> {
-  validateInput(args.drug_name);
+  validateInput(args.drug_name, "drug_name");
+  validateInput(args.group_by, "group_by");
+  validateNumber(args.limit, "limit", 1, 100);
   
   audit({ level: "info", event: "get_event_counts", drug: args.drug_name, group_by: args.group_by });
   
@@ -477,8 +559,9 @@ async function handleCompareSafetyProfiles(args: {
   }
   
   for (const drug of args.drug_names) {
-    validateInput(drug);
+    validateInput(drug, "drug_names");
   }
+  validateNumber(args.top_n, "top_n", 1, 50);
   
   audit({ level: "info", event: "compare_safety_profiles", drugs: args.drug_names.join(", ") });
   
@@ -523,7 +606,8 @@ async function handleGetSeriousEvents(args: {
   outcome_type?: string;
   limit?: number;
 }): Promise<unknown> {
-  validateInput(args.drug_name);
+  validateInput(args.drug_name, "drug_name");
+  validateNumber(args.limit, "limit", 1, 100);
   
   audit({ level: "info", event: "get_serious_events", drug: args.drug_name, outcome_type: args.outcome_type });
   
@@ -623,7 +707,8 @@ async function handleGetReportingTrends(args: {
   granularity?: string;
   years?: number;
 }): Promise<unknown> {
-  validateInput(args.drug_name);
+  validateInput(args.drug_name, "drug_name");
+  validateNumber(args.years, "years", 1, 20);
   
   const granularity = args.granularity || "quarter";
   const years = args.years || 5;
@@ -709,7 +794,8 @@ async function handleSearchByReaction(args: {
   reaction: string;
   limit?: number;
 }): Promise<unknown> {
-  validateInput(args.reaction);
+  validateInput(args.reaction, "reaction");
+  validateNumber(args.limit, "limit", 1, 100);
   
   audit({ level: "info", event: "search_by_reaction", reaction: args.reaction });
   
@@ -754,7 +840,8 @@ async function handleGetConcomitantDrugs(args: {
   drug_name: string;
   limit?: number;
 }): Promise<unknown> {
-  validateInput(args.drug_name);
+  validateInput(args.drug_name, "drug_name");
+  validateNumber(args.limit, "limit", 1, 100);
   
   audit({ level: "info", event: "get_concomitant_drugs", drug: args.drug_name });
   
@@ -809,7 +896,7 @@ async function handleGetDataInfo(): Promise<unknown> {
     limit: 1,
   });
   
-  const apiKey = await getApiKey();
+  const apiKey = getApiKey();
   
   return {
     database: "FDA Adverse Event Reporting System (FAERS)",
@@ -844,14 +931,14 @@ async function handleGetDrugLabelInfo(args: {
   drug_name: string;
   sections?: string[];
 }): Promise<unknown> {
-  validateInput(args.drug_name);
+  validateInput(args.drug_name, "drug_name");
   
   audit({ level: "info", event: "get_drug_label_info", drug: args.drug_name });
   
   const escapedName = args.drug_name.replace(/"/g, '\\"');
   const search = `(openfda.brand_name:"${escapedName}"+OR+openfda.generic_name:"${escapedName}")`;
   
-  const url = await buildUrl(OPENFDA_LABEL_URL, { search, limit: 1 });
+  const url = buildUrl(OPENFDA_LABEL_URL, { search, limit: 1 });
   
   try {
     const response = await fetch(url);
@@ -934,7 +1021,8 @@ async function handleGetRecallInfo(args: {
   status?: string;
   limit?: number;
 }): Promise<unknown> {
-  validateInput(args.drug_name);
+  validateInput(args.drug_name, "drug_name");
+  validateNumber(args.limit, "limit", 1, 100);
   
   audit({ level: "info", event: "get_recall_info", drug: args.drug_name });
   
@@ -949,7 +1037,7 @@ async function handleGetRecallInfo(args: {
     search += `+AND+status:"${args.status}"`;
   }
   
-  const url = await buildUrl(OPENFDA_ENFORCEMENT_URL, { search, limit: args.limit || 10 });
+  const url = buildUrl(OPENFDA_ENFORCEMENT_URL, { search, limit: args.limit || 10 });
   
   try {
     const response = await fetch(url);
@@ -1033,7 +1121,8 @@ async function handleSearchByIndication(args: {
   group_by?: string;
   limit?: number;
 }): Promise<unknown> {
-  validateInput(args.indication);
+  validateInput(args.indication, "indication");
+  validateNumber(args.limit, "limit", 1, 100);
   
   const groupBy = args.group_by || "drug";
   
@@ -1109,7 +1198,8 @@ async function handleSearchByDrugClass(args: {
   serious_only?: boolean;
   limit?: number;
 }): Promise<unknown> {
-  validateInput(args.drug_class);
+  validateInput(args.drug_class, "drug_class");
+  validateNumber(args.limit, "limit", 1, 100);
   
   const groupBy = args.group_by || "reaction";
   
@@ -1207,7 +1297,8 @@ async function handleCompareLabelToReports(args: {
   drug_name: string;
   top_n?: number;
 }): Promise<unknown> {
-  validateInput(args.drug_name);
+  validateInput(args.drug_name, "drug_name");
+  validateNumber(args.top_n, "top_n", 1, 100);
   
   audit({ level: "info", event: "compare_label_to_reports", drug: args.drug_name });
   
@@ -1216,7 +1307,7 @@ async function handleCompareLabelToReports(args: {
   // Step 1: Get drug label adverse reactions
   const escapedName = args.drug_name.replace(/"/g, '\\"');
   const labelSearch = `(openfda.brand_name:"${escapedName}"+OR+openfda.generic_name:"${escapedName}")`;
-  const labelUrl = await buildUrl(OPENFDA_LABEL_URL, { search: labelSearch, limit: 1 });
+  const labelUrl = buildUrl(OPENFDA_LABEL_URL, { search: labelSearch, limit: 1 });
   
   let labelAdverseReactions: string[] = [];
   let labelWarnings: string | null = null;
@@ -1335,7 +1426,8 @@ async function handleGetPediatricSafety(args: {
   include_adult_comparison?: boolean;
   limit?: number;
 }): Promise<unknown> {
-  validateInput(args.drug_name);
+  validateInput(args.drug_name, "drug_name");
+  validateNumber(args.limit, "limit", 1, 100);
   
   const ageGroup = args.age_group || "all_pediatric";
   const includeAdultComparison = args.include_adult_comparison !== false;
@@ -1482,7 +1574,8 @@ async function handleGetGeriatricSafety(args: {
   include_adult_comparison?: boolean;
   limit?: number;
 }): Promise<unknown> {
-  validateInput(args.drug_name);
+  validateInput(args.drug_name, "drug_name");
+  validateNumber(args.limit, "limit", 1, 100);
   
   const ageGroup = args.age_group || "all_geriatric";
   const includeAdultComparison = args.include_adult_comparison !== false;
@@ -1636,7 +1729,7 @@ async function handleGetSafetySummary(args: {
   include_label_warnings?: boolean;
   include_recalls?: boolean;
 }): Promise<unknown> {
-  validateInput(args.drug_name);
+  validateInput(args.drug_name, "drug_name");
   
   const includeLabelWarnings = args.include_label_warnings !== false;
   const includeRecalls = args.include_recalls !== false;
@@ -1741,7 +1834,7 @@ async function handleGetSafetySummary(args: {
   if (includeLabelWarnings) {
     const escapedName = args.drug_name.replace(/"/g, '\\"');
     const labelSearch = `(openfda.brand_name:"${escapedName}"+OR+openfda.generic_name:"${escapedName}")`;
-    const labelUrl = await buildUrl(OPENFDA_LABEL_URL, { search: labelSearch, limit: 1 });
+    const labelUrl = buildUrl(OPENFDA_LABEL_URL, { search: labelSearch, limit: 1 });
     
     try {
       const labelResponse = await fetch(labelUrl);
@@ -1765,7 +1858,7 @@ async function handleGetSafetySummary(args: {
   if (includeRecalls) {
     const escapedName = args.drug_name.replace(/"/g, '\\"');
     const recallSearch = `(product_description:"${escapedName}"+OR+openfda.brand_name:"${escapedName}")`;
-    const recallUrl = await buildUrl(OPENFDA_ENFORCEMENT_URL, { search: recallSearch, limit: 5 });
+    const recallUrl = buildUrl(OPENFDA_ENFORCEMENT_URL, { search: recallSearch, limit: 5 });
     
     try {
       const recallResponse = await fetch(recallUrl);
@@ -1833,14 +1926,14 @@ async function handleGetSafetySummary(args: {
 async function handleGetPregnancyLactationInfo(args: {
   drug_name: string;
 }): Promise<unknown> {
-  validateInput(args.drug_name);
+  validateInput(args.drug_name, "drug_name");
   
   audit({ level: "info", event: "get_pregnancy_lactation_info", drug: args.drug_name });
   
   const escapedName = args.drug_name.replace(/"/g, '\\"');
   const search = `(openfda.brand_name:"${escapedName}"+OR+openfda.generic_name:"${escapedName}")`;
   
-  const url = await buildUrl(OPENFDA_LABEL_URL, { search, limit: 1 });
+  const url = buildUrl(OPENFDA_LABEL_URL, { search, limit: 1 });
   
   try {
     const response = await fetch(url);

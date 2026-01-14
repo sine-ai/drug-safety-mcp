@@ -1,14 +1,3 @@
 {
-  "mcpServers": {
-    "drug-safety-mcp": {
-      "command": "npx",
-      "args": [
-        "tsx",
-        "src/index.ts"
-      ],
-      "env": {
-        "MCP_MODE": "local"
-      }
-    }
-  }
+  "mcpServers": {}
 }

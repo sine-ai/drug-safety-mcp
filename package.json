@@ -1,17 +1,17 @@
 {
-  "name": "@sineai/drug-safety-mcp",
-  "version": "1.0.0",
-  "description": "drug-safety-mcp MCP server",
+  "name": "drug-safety-mcp",
+  "version": "1.1.0",
+  "description": "MCP server for FDA Adverse Event Reporting System (FAERS) data via OpenFDA API",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "drug-safety-mcp": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "start:remote": "MCP_MODE=remote node dist/index.js",
-    "docker:build": "docker build -t sineai/drug-safety-mcp .",
-    "docker:run": "docker run -p 3000:3000 --env-file .env sineai/drug-safety-mcp",
-    "deploy": "bash deploy.sh",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -20,11 +20,10 @@
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-    "update:core": "npm update @sineai/mcp-core"
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@sineai/mcp-core": "^1.0.0",
-    "dotenv": "^16.3.0"
+    "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -39,5 +38,28 @@
   },
   "engines": {
     "node": ">=18.0.0"
-  }
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "fda",
+    "faers",
+    "drug-safety",
+    "pharmacovigilance",
+    "adverse-events",
+    "openfda"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sine-ai/drug-safety-mcp"
+  },
+  "author": {
+    "name": "SineAI",
+    "url": "https://sineai.co"
+  },
+  "bugs": {
+    "url": "https://github.com/sine-ai/drug-safety-mcp/issues"
+  },
+  "homepage": "https://github.com/sine-ai/drug-safety-mcp#readme"
 }
