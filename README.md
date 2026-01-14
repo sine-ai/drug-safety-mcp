@@ -128,7 +128,7 @@ User → drug-safety-mcp → MCP Gateway → Azure AD → User signs in
 
 ```bash
 OAUTH_ENABLED=true
-MCP_GATEWAY_URL=https://mcp-gateway.greenforest-9db5c66e.eastus.azurecontainerapps.io
+MCP_GATEWAY_URL=https://your-mcp-gateway.example.com
 BASE_URL=https://your-server.com
 ```
 
