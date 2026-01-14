@@ -221,13 +221,42 @@ export async function authenticateRequest(
   return result;
 }
 
+/**
+ * Sanitize error message for client response
+ * Prevents leaking internal error details (CWE-200, CWE-209)
+ */
+function sanitizeErrorMessage(error: string): string {
+  // Map of safe, user-friendly error messages
+  const safeMessages: Record<string, string> = {
+    "missing authorization header": "Authentication required. Please sign in.",
+    "invalid token format": "Invalid authentication token. Please sign in again.",
+    "invalid or expired token": "Your session has expired. Please sign in again.",
+    "token validation failed": "Authentication failed. Please try again.",
+    "gateway validation failed": "Authentication service unavailable. Please try again later.",
+  };
+
+  // Check if error matches a known safe message pattern
+  const errorLower = error.toLowerCase();
+  for (const [pattern, safeMessage] of Object.entries(safeMessages)) {
+    if (errorLower.includes(pattern)) {
+      return safeMessage;
+    }
+  }
+
+  // Default generic message - don't expose internal details
+  return "Authentication failed. Please sign in again.";
+}
+
 export function sendUnauthorized(res: ServerResponse, error: string): void {
+  // Log the actual error for debugging (server-side only)
+  console.error(`[AUTH] Unauthorized: ${error}`);
+  
   res.writeHead(401, {
     "Content-Type": "application/json",
     "WWW-Authenticate": 'Bearer realm="drug-safety-mcp", error="invalid_token"',
   });
   res.end(JSON.stringify({
     error: "unauthorized",
-    error_description: error,
+    error_description: sanitizeErrorMessage(error),
   }));
 }

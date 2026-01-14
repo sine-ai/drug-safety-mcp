@@ -755,9 +755,10 @@ async function handleGetReportingTrends(args: {
         period = `${year}-${month}`;
         break;
       case "quarter":
-      default:
+      default: {
         const quarter = Math.ceil(parseInt(month) / 3);
         period = `${year}-Q${quarter}`;
+      }
     }
     
     aggregated[period] = (aggregated[period] || 0) + item.count;
