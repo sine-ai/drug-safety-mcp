@@ -104,10 +104,75 @@ Connect to the remote server:
 - `GET /health` - Health check
 - `POST /mcp` - MCP Streamable HTTP endpoint
 
-**Security Note**: The remote mode does not include built-in authentication. For production deployments:
-- Deploy behind a reverse proxy (nginx, Cloudflare, etc.) with authentication
-- Use OAuth 2.0 with certificates from recognized authorities for secure access
+### OAuth 2.0 Authentication (via MCP Gateway)
+
+Remote mode uses **MCP Gateway** for OAuth 2.0 authentication. Users sign in with their **Microsoft account**:
+- ✅ Microsoft work/school accounts (Azure AD / Microsoft 365)
+- ✅ Microsoft personal accounts (Outlook, Hotmail, Xbox, Skype)
+
+#### How It Works
+
+```
+User → drug-safety-mcp → MCP Gateway → Azure AD → User signs in
+                              ↓
+                    Token returned to client
+```
+
+1. MCP client discovers OAuth endpoints via `/.well-known/oauth-authorization-server`
+2. Client redirects user to MCP Gateway's authorization endpoint
+3. User signs in with Microsoft account via Gateway
+4. Gateway returns access token
+5. Client uses token for MCP requests
+
+#### Configuration
+
+```bash
+OAUTH_ENABLED=true
+MCP_GATEWAY_URL=https://mcp-gateway.greenforest-9db5c66e.eastus.azurecontainerapps.io
+BASE_URL=https://your-server.com
+```
+
+**Security Notes:**
 - Always use HTTPS in production
+- Set `CORS_ORIGIN` to specific origins in production
+- MCP Gateway handles Azure AD integration and token management
+
+### Docker Deployment
+
+Build and run with Docker:
+
+```bash
+# Build the image
+docker build -t drug-safety-mcp .
+
+# Run the container
+docker run -p 3000:3000 -e OPENFDA_API_KEY=your_key drug-safety-mcp
+```
+
+Or with Docker Compose:
+
+```yaml
+version: '3.8'
+services:
+  drug-safety-mcp:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - MCP_MODE=remote
+      - PORT=3000
+      - OPENFDA_API_KEY=${OPENFDA_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+```
+
+Deploy to cloud platforms:
+- **Azure Container Apps**: `az containerapp up --source .`
+- **Google Cloud Run**: `gcloud run deploy --source .`
+- **AWS App Runner**: Connect your GitHub repo
 
 ## OpenFDA API Key (Optional)
 
@@ -260,10 +325,14 @@ npm run lint
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENFDA_API_KEY` | - | OpenFDA API key (optional, uses free tier if not set) |
 | `MCP_MODE` | `local` | `local` (stdio) or `remote` (Streamable HTTP) |
 | `PORT` | `3000` | HTTP port for remote mode |
+| `BASE_URL` | - | Server's public URL (required for remote mode) |
+| `OPENFDA_API_KEY` | - | OpenFDA API key (optional, uses free tier if not set) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `OAUTH_ENABLED` | `false` | Enable OAuth 2.0 authentication for remote mode |
+| `MCP_GATEWAY_URL` | - | MCP Gateway URL for OAuth (handles Azure AD) |
+| `CORS_ORIGIN` | `*` | Allowed CORS origin (set specific origin in production) |
 
 ## Privacy & Data
 

@@ -7,7 +7,7 @@
  * 
  * Supports two transport modes:
  * - Local (stdio): For Claude Desktop, Cursor IDE, and other local MCP clients
- * - Remote (Streamable HTTP): For remote/cloud deployments
+ * - Remote (Streamable HTTP): For remote/cloud deployments with OAuth 2.0 via MCP Gateway
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -19,9 +19,16 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { TOOLS, handleTool } from "./tools/index.js";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import {
+  loadOAuthConfig,
+  validateOAuthConfig,
+  authenticateRequest,
+  sendUnauthorized,
+  getGatewayEndpoints,
+} from "./auth.js";
 
 const NAME = "drug-safety-mcp";
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 
 /**
  * Create and configure the MCP server
@@ -32,12 +39,10 @@ function createMcpServer(): Server {
     { capabilities: { tools: {} } }
   );
 
-  // List available tools
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: TOOLS,
   }));
 
-  // Handle tool calls
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     try {
@@ -58,7 +63,7 @@ function createMcpServer(): Server {
 }
 
 /**
- * Run server in local stdio mode (for Claude Desktop, Cursor, etc.)
+ * Run server in local stdio mode
  */
 async function runLocalMode(): Promise<void> {
   const server = createMcpServer();
@@ -68,33 +73,95 @@ async function runLocalMode(): Promise<void> {
 }
 
 /**
- * Run server in remote HTTP mode with Streamable HTTP transport
+ * Run server in remote HTTP mode with OAuth 2.0 via MCP Gateway
  */
 async function runRemoteMode(): Promise<void> {
   const port = parseInt(process.env.PORT || "3000", 10);
   
-  // Track active transports for session management
+  const oauthConfig = loadOAuthConfig();
+  validateOAuthConfig(oauthConfig);
+  
+  const gatewayEndpoints = oauthConfig.enabled ? getGatewayEndpoints(oauthConfig) : null;
   const transports = new Map<string, StreamableHTTPServerTransport>();
 
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url || "/", `http://localhost:${port}`);
     
-    // Health check endpoint
-    if (url.pathname === "/health" && req.method === "GET") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", name: NAME, version: VERSION }));
+    // CORS headers
+    const corsOrigin = process.env.CORS_ORIGIN || "*";
+    res.setHeader("Access-Control-Allow-Origin", corsOrigin);
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, mcp-session-id");
+    res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
+    
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
       return;
     }
-
-    // MCP endpoint
+    
+    // =========================================================================
+    // Health check (no auth)
+    // =========================================================================
+    if (url.pathname === "/health" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ 
+        status: "ok", 
+        name: NAME, 
+        version: VERSION,
+        oauth_enabled: oauthConfig.enabled,
+        oauth_provider: oauthConfig.enabled ? "mcp-gateway" : null,
+      }));
+      return;
+    }
+    
+    // =========================================================================
+    // OAuth 2.0 Discovery (RFC 8414) - Points to MCP Gateway
+    // =========================================================================
+    if (url.pathname === "/.well-known/oauth-authorization-server" && req.method === "GET") {
+      if (!oauthConfig.enabled || !gatewayEndpoints) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "OAuth not enabled" }));
+        return;
+      }
+      
+      // Point clients to Gateway for OAuth
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        issuer: oauthConfig.gatewayUrl,
+        authorization_endpoint: gatewayEndpoints.authorizationEndpoint,
+        token_endpoint: gatewayEndpoints.tokenEndpoint,
+        registration_endpoint: gatewayEndpoints.registrationEndpoint,
+        scopes_supported: ["openid", "profile", "email", "mcp"],
+        response_types_supported: ["code"],
+        response_modes_supported: ["query"],
+        grant_types_supported: ["authorization_code", "refresh_token"],
+        token_endpoint_auth_methods_supported: ["client_secret_post", "none"],
+        code_challenge_methods_supported: ["S256", "plain"],
+      }));
+      return;
+    }
+    
+    // =========================================================================
+    // MCP Endpoint (requires auth)
+    // =========================================================================
     if (url.pathname === "/mcp") {
-      // Get or create session ID
+      const authResult = await authenticateRequest(req, res, oauthConfig);
+      
+      if (!authResult || !authResult.authenticated) {
+        sendUnauthorized(res, authResult?.error || "Authentication required");
+        return;
+      }
+      
+      if (oauthConfig.enabled && authResult.email) {
+        console.error(`[AUTH] User ${authResult.email} accessing MCP`);
+      }
+      
       const sessionId = req.headers["mcp-session-id"] as string || crypto.randomUUID();
       
       let transport = transports.get(sessionId);
       
       if (!transport) {
-        // Create new transport and server for this session
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => sessionId,
         });
@@ -103,32 +170,32 @@ async function runRemoteMode(): Promise<void> {
         const server = createMcpServer();
         await server.connect(transport);
         
-        // Clean up on close
         transport.onclose = () => {
           transports.delete(sessionId);
         };
       }
 
-      // Handle the request
       await transport.handleRequest(req, res);
       return;
     }
 
-    // 404 for unknown paths
+    // 404
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Not found" }));
   });
 
   httpServer.listen(port, () => {
     console.error(`${NAME} v${VERSION} started (HTTP mode on port ${port})`);
-    console.error(`Health check: http://localhost:${port}/health`);
-    console.error(`MCP endpoint: http://localhost:${port}/mcp`);
+    console.error(`Health: http://localhost:${port}/health`);
+    console.error(`MCP: http://localhost:${port}/mcp`);
+    if (oauthConfig.enabled) {
+      console.error(`OAuth: ENABLED via MCP Gateway (${oauthConfig.gatewayUrl})`);
+    } else {
+      console.error(`OAuth: DISABLED`);
+    }
   });
 }
 
-/**
- * Main entry point
- */
 async function main(): Promise<void> {
   const mode = process.env.MCP_MODE?.toLowerCase();
   
