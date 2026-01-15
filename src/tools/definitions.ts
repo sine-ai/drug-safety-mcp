@@ -8,8 +8,6 @@
  */
 
 export interface ToolAnnotations {
-  /** Human-readable title for the tool */
-  title?: string;
   /** If true, the tool does not modify any state (read-only) */
   readOnlyHint?: boolean;
   /** If true, the tool may perform destructive operations */
@@ -20,6 +18,7 @@ export interface ToolAnnotations {
 
 export interface ToolDefinition {
   name: string;
+  title?: string;
   description: string;
   inputSchema: {
     type: "object";
@@ -35,6 +34,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "search_adverse_events",
+    title: "Search Adverse Events",
     description: "Search FAERS for adverse event reports by drug name, reaction, or date range. Returns individual case reports with patient demographics, reactions, and outcomes.",
     inputSchema: {
       type: "object",
@@ -67,7 +67,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["drug_name"],
     },
     annotations: {
-      title: "Search Adverse Events",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -79,6 +78,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "get_event_counts",
+    title: "Get Event Counts",
     description: "Get aggregated counts of adverse events for a drug, grouped by reaction, outcome, patient age, sex, or country. Useful for understanding the safety profile distribution.",
     inputSchema: {
       type: "object",
@@ -100,7 +100,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["drug_name", "group_by"],
     },
     annotations: {
-      title: "Get Event Counts",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -112,6 +111,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "compare_safety_profiles",
+    title: "Compare Safety Profiles",
     description: "Compare adverse event profiles across multiple drugs. Returns top reactions for each drug for side-by-side comparison.",
     inputSchema: {
       type: "object",
@@ -129,7 +129,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["drug_names"],
     },
     annotations: {
-      title: "Compare Safety Profiles",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -141,6 +140,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "get_serious_events",
+    title: "Get Serious Events",
     description: "Get serious adverse events for a drug, filtered by outcome type (death, hospitalization, life-threatening, disability, congenital anomaly, or other serious).",
     inputSchema: {
       type: "object",
@@ -162,7 +162,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["drug_name"],
     },
     annotations: {
-      title: "Get Serious Events",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -174,6 +173,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "get_reporting_trends",
+    title: "Get Reporting Trends",
     description: "Get adverse event reporting trends over time for a drug. Useful for detecting safety signals (sudden increases in reports).",
     inputSchema: {
       type: "object",
@@ -195,7 +195,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["drug_name"],
     },
     annotations: {
-      title: "Get Reporting Trends",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -207,6 +206,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "search_by_reaction",
+    title: "Search by Reaction",
     description: "Find all drugs associated with a specific adverse reaction. Useful for understanding which drugs commonly cause a particular side effect.",
     inputSchema: {
       type: "object",
@@ -223,7 +223,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["reaction"],
     },
     annotations: {
-      title: "Search by Reaction",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -235,6 +234,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "get_concomitant_drugs",
+    title: "Get Concomitant Drugs",
     description: "Find drugs commonly co-reported with a specific drug in adverse event reports. Helps identify potential drug interactions.",
     inputSchema: {
       type: "object",
@@ -251,7 +251,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["drug_name"],
     },
     annotations: {
-      title: "Get Concomitant Drugs",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -263,6 +262,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "get_data_info",
+    title: "Get Data Info",
     description: "Get information about the FAERS database including last update date, data limitations, and how to interpret results.",
     inputSchema: {
       type: "object",
@@ -270,7 +270,6 @@ export const TOOLS: ToolDefinition[] = [
       required: [],
     },
     annotations: {
-      title: "Get Data Info",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -282,6 +281,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "get_drug_label_info",
+    title: "Get Drug Label Info",
     description: "Get FDA drug label information including indications, warnings, contraindications, adverse reactions, and boxed warnings. Provides official prescribing information context.",
     inputSchema: {
       type: "object",
@@ -299,7 +299,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["drug_name"],
     },
     annotations: {
-      title: "Get Drug Label Info",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -311,6 +310,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "get_recall_info",
+    title: "Get Recall Info",
     description: "Search FDA drug recalls and enforcement actions. Returns recall classification, reason, distribution, and status for drug safety issues.",
     inputSchema: {
       type: "object",
@@ -337,7 +337,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["drug_name"],
     },
     annotations: {
-      title: "Get Recall Info",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -349,6 +348,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "search_by_indication",
+    title: "Search by Indication",
     description: "Find adverse events for drugs used for a specific indication/condition. Useful for comparing safety profiles of drugs in the same therapeutic class.",
     inputSchema: {
       type: "object",
@@ -370,7 +370,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["indication"],
     },
     annotations: {
-      title: "Search by Indication",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -382,6 +381,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "search_by_drug_class",
+    title: "Search by Drug Class",
     description: "Search adverse events across an entire drug class (pharmacologic class). Compare safety profiles of all drugs in a therapeutic category like 'TNF inhibitors', 'GLP-1 agonists', 'SSRIs', etc.",
     inputSchema: {
       type: "object",
@@ -407,7 +407,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["drug_class"],
     },
     annotations: {
-      title: "Search by Drug Class",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -419,6 +418,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "compare_label_to_reports",
+    title: "Compare Label to Reports",
     description: "Compare FDA drug label adverse reactions to actual FAERS reports. Identifies potential emerging signals (reactions reported but not on label) and validates labeled reactions. Critical for pharmacovigilance signal detection.",
     inputSchema: {
       type: "object",
@@ -435,7 +435,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["drug_name"],
     },
     annotations: {
-      title: "Compare Label to Reports",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -447,6 +446,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "get_pediatric_safety",
+    title: "Get Pediatric Safety",
     description: "Get adverse event data specifically for pediatric patients (age 0-17). Returns age-stratified safety data, top reactions in children, and comparison to adult safety profile. Essential for pediatric trial planning.",
     inputSchema: {
       type: "object",
@@ -472,7 +472,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["drug_name"],
     },
     annotations: {
-      title: "Get Pediatric Safety",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -484,6 +483,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "get_geriatric_safety",
+    title: "Get Geriatric Safety",
     description: "Get adverse event data specifically for geriatric patients (age 65+). Returns age-stratified safety data, top reactions in elderly, falls/cognitive events, and comparison to younger adult profile. Essential for trials in elderly populations.",
     inputSchema: {
       type: "object",
@@ -509,7 +509,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["drug_name"],
     },
     annotations: {
-      title: "Get Geriatric Safety",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -521,6 +520,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "get_safety_summary",
+    title: "Get Safety Summary",
     description: "Get an executive safety summary for a drug combining: total report counts, top 10 reactions, serious event breakdown, recent trend direction, any recalls, and boxed warnings. Ideal for quick due diligence or HCP questions.",
     inputSchema: {
       type: "object",
@@ -541,7 +541,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["drug_name"],
     },
     annotations: {
-      title: "Get Safety Summary",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -553,6 +552,7 @@ export const TOOLS: ToolDefinition[] = [
   // -------------------------------------------------------------------------
   {
     name: "get_pregnancy_lactation_info",
+    title: "Get Pregnancy & Lactation Info",
     description: "Get pregnancy and lactation safety information from FDA drug label. Includes pregnancy category/narrative, lactation recommendations, and females/males of reproductive potential guidance. Critical for protocol exclusion criteria.",
     inputSchema: {
       type: "object",
@@ -565,7 +565,6 @@ export const TOOLS: ToolDefinition[] = [
       required: ["drug_name"],
     },
     annotations: {
-      title: "Get Pregnancy & Lactation Info",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
