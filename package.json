@@ -1,12 +1,19 @@
 {
-  "name": "drug-safety-mcp",
-  "version": "1.2.0",
-  "description": "MCP server for FDA Adverse Event Reporting System (FAERS) data via OpenFDA API",
+  "name": "@sineai/drug-safety-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for FDA Adverse Event Reporting System (FAERS) data via OpenFDA API. Comprehensive pharmacovigilance toolkit for drug safety analysis.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
     "drug-safety-mcp": "dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md",
+    "CONTRIBUTING.md"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
@@ -56,10 +63,15 @@
   },
   "author": {
     "name": "SineAI",
+    "email": "mcp-support@sineai.com",
     "url": "https://sineai.co"
   },
   "bugs": {
-    "url": "https://github.com/sine-ai/drug-safety-mcp/issues"
+    "url": "https://github.com/sine-ai/drug-safety-mcp/issues",
+    "email": "mcp-support@sineai.com"
   },
-  "homepage": "https://github.com/sine-ai/drug-safety-mcp#readme"
+  "homepage": "https://sineai.co/mcp",
+  "publishConfig": {
+    "access": "public"
+  }
 }

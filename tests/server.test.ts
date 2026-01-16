@@ -39,10 +39,16 @@ describe("Tool Definitions", () => {
     }
   });
 
+  it("should have title on all tools", () => {
+    for (const tool of TOOLS) {
+      expect(tool.title).toBeDefined();
+      expect(tool.title!.length).toBeGreaterThan(0);
+    }
+  });
+
   it("should have annotations on all tools", () => {
     for (const tool of TOOLS) {
       expect(tool.annotations).toBeDefined();
-      expect(tool.annotations?.title).toBeDefined();
       expect(tool.annotations?.readOnlyHint).toBe(true); // All tools are read-only
       expect(tool.annotations?.destructiveHint).toBe(false);
       expect(tool.annotations?.openWorldHint).toBe(true); // All query external API
